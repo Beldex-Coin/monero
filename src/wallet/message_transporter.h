@@ -1,4 +1,4 @@
-// Copyright (c) 2018, The Monero Project
+// Copyright (c) 2019, The Monero Project
 //
 // All rights reserved.
 //
@@ -42,7 +42,7 @@
 namespace mms
 {
 
-struct transport_message
+struct transport_message_t
 {
   cryptonote::account_public_address source_monero_address;
   std::string source_transport_address;

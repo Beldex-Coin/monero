@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2018, The Monero Project
+// Copyright (c) 2017-2019, The Monero Project
 // Copyright (c)      2018, The Beldex Project
 // 
 // All rights reserved.
@@ -58,7 +58,7 @@ void block_queue::add_blocks(uint64_t height, std::vector<cryptonote::block_comp
   boost::unique_lock<boost::recursive_mutex> lock(mutex);
   std::vector<crypto::hash> hashes;
   bool has_hashes = remove_span(height, &hashes);
-  blocks.insert(span(height, std::move(bcel), connection_id, rate, size));
+  blocks.emplace(height, std::move(bcel), connection_id, rate, size);
   if (has_hashes)
   {
     for (const crypto::hash &h: hashes)

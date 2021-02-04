@@ -1,5 +1,5 @@
 # Copyright (c) 2018, The Beldex Project
-# Copyright (c) 2014-2018, The Monero Project
+# Copyright (c) 2014-2019, The Monero Project
 #
 # All rights reserved.
 #
@@ -32,9 +32,12 @@ set(cryptonote_core_sources
   cryptonote_core.cpp
   master_node_rules.cpp
   master_node_list.cpp
-  master_node_deregister.cpp
+  master_node_voting.cpp
   master_node_quorum_cop.cpp
+  master_node_swarm.cpp
   tx_pool.cpp
+  tx_sanity_check.cpp
+  miner.cpp
   cryptonote_tx_utils.cpp)
 
 set(cryptonote_core_headers)
@@ -45,9 +48,12 @@ set(cryptonote_core_private_headers
   master_node_rules.h
   master_node_list.h
   master_node_quorum_cop.h
+  master_node_swarm.h
   cryptonote_core.h
-  master_node_deregister.h
+  master_node_voting.h
   tx_pool.h
+  tx_sanity_check.h
+  miner.h
   cryptonote_tx_utils.h)
 
 beldex_private_headers(cryptonote_core

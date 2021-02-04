@@ -40,7 +40,7 @@ namespace
 {
   struct tx_builder
   {
-    void step1_init(size_t version = 7, uint64_t unlock_time = 0)
+    void step1_init(txversion version = txversion::v2_ringct, uint64_t unlock_time = 0)
     {
       m_tx.vin.clear();
       m_tx.vout.clear();

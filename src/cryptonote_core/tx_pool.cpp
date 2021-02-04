@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // Copyright (c)      2018, The Beldex Project
 //
 // All rights reserved.
@@ -37,6 +37,7 @@
 #include "tx_pool.h"
 #include "cryptonote_tx_utils.h"
 #include "cryptonote_basic/cryptonote_boost_serialization.h"
+#include "cryptonote_core/master_node_list.h"
 #include "cryptonote_config.h"
 #include "blockchain.h"
 #include "blockchain_db/blockchain_db.h"
@@ -99,13 +100,17 @@ namespace cryptonote
     // the whole prepare/handle/cleanup incoming block sequence.
     class LockedTXN {
     public:
-      LockedTXN(Blockchain &b): m_blockchain(b), m_batch(false) {
+      LockedTXN(Blockchain &b): m_blockchain(b), m_batch(false), m_active(false) {
         m_batch = m_blockchain.get_db().batch_start();
+        m_active = true;
       }
-      ~LockedTXN() { try { if (m_batch) { m_blockchain.get_db().batch_stop(); } } catch (const std::exception &e) { MWARNING("LockedTXN dtor filtering exception: " << e.what()); } }
+      void commit() { try { if (m_batch && m_active) { m_blockchain.get_db().batch_stop(); m_active = false; } } catch (const std::exception &e) { MWARNING("LockedTXN::commit filtering exception: " << e.what()); } }
+      void abort() { try { if (m_batch && m_active) { m_blockchain.get_db().batch_abort(); m_active = false; } } catch (const std::exception &e) { MWARNING("LockedTXN::abort filtering exception: " << e.what()); } }
+      ~LockedTXN() { this->abort(); }
     private:
       Blockchain &m_blockchain;
       bool m_batch;
+      bool m_active;
     };
   }
   //---------------------------------------------------------------------------------
@@ -115,49 +120,74 @@ namespace cryptonote
 
   }
   //---------------------------------------------------------------------------------
-  bool tx_memory_pool::have_duplicated_non_standard_tx(transaction const &tx) const
+  bool tx_memory_pool::have_duplicated_non_standard_tx(transaction const &tx, uint8_t hard_fork_version, master_nodes::master_node_list const &master_node_list) const
   {
-    transaction_prefix::type_t tx_type = tx.get_type();
-
-    if (tx_type == transaction::type_standard)
+    if (tx.type == txtype::standard)
       return false;
 
-    if (tx_type == transaction::type_deregister)
+    if (tx.type == txtype::state_change)
     {
-      tx_extra_master_node_deregister deregister;
-      if (!get_master_node_deregister_from_tx_extra(tx.extra, deregister))
+      tx_extra_master_node_state_change state_change;
+      if (!get_master_node_state_change_from_tx_extra(tx.extra, state_change, hard_fork_version))
       {
-        MERROR("Could not get master node deregister from tx, possibly corrupt tx in your blockchain, rejecting malformed deregister");
-        return true;
+        MERROR("Could not get master node state change from tx: " << get_transaction_hash(tx) << ", possibly corrupt tx in your blockchain, rejecting malformed state change");
+        return false;
       }
+
+      crypto::public_key master_node_to_change;
+      auto const quorum_type               = master_nodes::quorum_type::obligations;
+      auto const quorum_group              = master_nodes::quorum_group::worker;
+
+      // NOTE: We can fail to resolve a public key if we are popping blocks greater than the number of quorums we store.
+      bool const can_resolve_quorum_pubkey = master_node_list.get_quorum_pubkey(quorum_type,
+                                                                                 quorum_group,
+                                                                                 state_change.block_height,
+                                                                                 state_change.master_node_index,
+                                                                                 master_node_to_change);
 
       std::vector<transaction> pool_txs;
       get_transactions(pool_txs);
       for (const transaction& pool_tx : pool_txs)
       {
-        if (pool_tx.get_type() != transaction::type_deregister)
+        if (pool_tx.type != txtype::state_change)
           continue;
 
-        tx_extra_master_node_deregister pool_tx_deregister;
-        if (!get_master_node_deregister_from_tx_extra(pool_tx.extra, pool_tx_deregister))
+        tx_extra_master_node_state_change pool_tx_state_change;
+        if (!get_master_node_state_change_from_tx_extra(pool_tx.extra, pool_tx_state_change, hard_fork_version))
         {
-          MERROR("Could not get master node deregister from tx, possibly corrupt tx in your blockchain");
+          MERROR("Could not get master node state change from tx: " << get_transaction_hash(pool_tx) << ", possibly corrupt tx in the pool");
           continue;
         }
 
-        if ((pool_tx_deregister.block_height       == deregister.block_height) &&
-            (pool_tx_deregister.master_node_index == deregister.master_node_index))
+        if (hard_fork_version >= cryptonote::network_version_13_checkpointing)
         {
-          return true;
+          crypto::public_key master_node_to_change_in_the_pool;
+          bool same_master_node = false;
+          if (can_resolve_quorum_pubkey && master_node_list.get_quorum_pubkey(quorum_type, quorum_group, pool_tx_state_change.block_height, pool_tx_state_change.master_node_index, master_node_to_change_in_the_pool))
+          {
+            same_master_node = (master_node_to_change == master_node_to_change_in_the_pool);
+          }
+          else
+          {
+            same_master_node = (state_change == pool_tx_state_change);
+          }
+
+          if (same_master_node && pool_tx_state_change.state == state_change.state)
+            return true;
+        }
+        else
+        {
+          if (state_change == pool_tx_state_change)
+            return true;
         }
       }
     }
-    else if (tx_type == transaction::type_key_image_unlock)
+    else if (tx.type == txtype::key_image_unlock)
     {
       tx_extra_tx_key_image_unlock unlock;
       if (!cryptonote::get_tx_key_image_unlock_from_tx_extra(tx.extra, unlock))
       {
-        MERROR("Could not get key image unlock from tx, possibly corrupt tx in your blockchain, rejecting malformed tx");
+        MERROR("Could not get key image unlock from tx: " << get_transaction_hash(tx) << ", tx to add is possibly invalid, rejecting");
         return true;
       }
 
@@ -165,19 +195,19 @@ namespace cryptonote
       get_transactions(pool_txs);
       for (const transaction& pool_tx : pool_txs)
       {
-        if (pool_tx.get_type() != tx_type)
+        if (pool_tx.type != tx.type)
           continue;
 
         tx_extra_tx_key_image_unlock pool_unlock;
         if (!cryptonote::get_tx_key_image_unlock_from_tx_extra(pool_tx.extra, pool_unlock))
         {
-          MERROR("Could not get key image unlock from tx, possibly corrupt tx in your blockchain, rejecting malformed tx");
+          MERROR("Could not get key image unlock from tx: " << get_transaction_hash(tx) << ", possibly corrupt tx in the pool");
           return true;
         }
 
-        if (unlock.key_image == pool_unlock.key_image)
+        if (unlock == pool_unlock)
         {
-          MERROR("There was atleast one TX in the pool that is requesting to unlock the same key image already.");
+          LOG_PRINT_L1("New TX: " << get_transaction_hash(tx) << ", has TX: " << get_transaction_hash(pool_tx) << " from the pool that is requesting to unlock the same key image already.");
           return true;
         }
       }
@@ -186,20 +216,20 @@ namespace cryptonote
     else
     {
       // NOTE(beldex): This is a developer error. If we come across this in production, be conservative and just reject
-      MERROR("Unrecognised transaction type: " << static_cast<uint16_t>(tx_type) << " for tx: " <<  get_transaction_hash(tx));
+      MERROR("Unrecognised transaction type: " << tx.type << " for tx: " <<  get_transaction_hash(tx));
       return true;
     }
 
     return false;
   }
   //---------------------------------------------------------------------------------
-  bool tx_memory_pool::add_tx(transaction &tx, /*const crypto::hash& tx_prefix_hash,*/ const crypto::hash &id, const cryptonote::blobdata &blob, size_t tx_weight, tx_verification_context& tvc, bool kept_by_block, bool relayed, bool do_not_relay, uint8_t version)
+  bool tx_memory_pool::add_tx(transaction &tx, /*const crypto::hash& tx_prefix_hash,*/ const crypto::hash &id, const cryptonote::blobdata &blob, size_t tx_weight, tx_verification_context& tvc, bool kept_by_block, bool relayed, bool do_not_relay, uint8_t version, const master_nodes::master_node_list &master_node_list)
   {
     // this should already be called with that lock, but let's make it explicit for clarity
     CRITICAL_REGION_LOCAL(m_transactions_lock);
 
     PERF_TIMER(add_tx);
-    if (tx.version == transaction::version_0)
+    if (tx.version == txversion::v0)
     {
       // v0 never accepted
       LOG_PRINT_L1("transaction version 0 is invalid");
@@ -227,7 +257,7 @@ namespace cryptonote
     // fee per kilobyte, size rounded up.
     uint64_t fee;
 
-    if (tx.version == transaction::version_1)
+    if (tx.version == txversion::v1)
     {
       uint64_t inputs_amount = 0;
       if(!get_inputs_money_amount(tx, inputs_amount))
@@ -259,7 +289,7 @@ namespace cryptonote
       fee = tx.rct_signatures.txnFee;
     }
 
-    if (!kept_by_block && tx.get_type() == transaction::type_standard && !m_blockchain.check_fee(tx_weight, fee))
+    if (!kept_by_block && tx.type == txtype::standard && !m_blockchain.check_fee(tx_weight, fee))
     {
       tvc.m_verifivation_failed = true;
       tvc.m_fee_too_low = true;
@@ -288,7 +318,7 @@ namespace cryptonote
         tvc.m_double_spend = true;
         return false;
       }
-      if (have_duplicated_non_standard_tx(tx))
+      if (have_duplicated_non_standard_tx(tx, version, master_node_list))
       {
         mark_double_spend(tx);
         LOG_PRINT_L1("Transaction with id= "<< id << " already has a duplicate tx for height");
@@ -315,7 +345,7 @@ namespace cryptonote
     uint64_t max_used_block_height = 0;
     cryptonote::txpool_tx_meta_t meta;
     bool ch_inp_res = check_tx_inputs([&tx]()->cryptonote::transaction&{ return tx; }, id, max_used_block_height, max_used_block_id, tvc, kept_by_block);
-    const bool non_standard_tx = (tx.get_type() != transaction::type_standard);
+    const bool non_standard_tx = (tx.type != txtype::standard);
     if(!ch_inp_res)
     {
       // if the transaction was valid before (kept_by_block), then it
@@ -333,7 +363,7 @@ namespace cryptonote
         meta.last_relayed_time = time(NULL);
         meta.relayed = relayed;
         meta.do_not_relay = do_not_relay;
-        meta.double_spend_seen = (have_tx_keyimges_as_spent(tx) || have_duplicated_non_standard_tx(tx));
+        meta.double_spend_seen = (have_tx_keyimges_as_spent(tx) || have_duplicated_non_standard_tx(tx, version, master_node_list));
         meta.bf_padding = 0;
         memset(meta.padding, 0, sizeof(meta.padding));
         try
@@ -345,6 +375,7 @@ namespace cryptonote
           if (!insert_key_images(tx, id, kept_by_block))
             return false;
           m_txs_by_fee_and_receive_time.emplace(std::tuple<bool, double, std::time_t>(non_standard_tx, fee / (double)tx_weight, receive_time), id);
+          lock.commit();
         }
         catch (const std::exception &e)
         {
@@ -389,6 +420,7 @@ namespace cryptonote
         if (!insert_key_images(tx, id, kept_by_block))
           return false;
         m_txs_by_fee_and_receive_time.emplace(std::tuple<bool, double, std::time_t>(non_standard_tx, fee / (double)tx_weight, receive_time), id);
+        lock.commit();
       }
       catch (const std::exception &e)
       {
@@ -413,7 +445,7 @@ namespace cryptonote
     return true;
   }
   //---------------------------------------------------------------------------------
-  bool tx_memory_pool::add_tx(transaction &tx, tx_verification_context& tvc, bool keeped_by_block, bool relayed, bool do_not_relay, uint8_t version)
+  bool tx_memory_pool::add_tx(transaction &tx, tx_verification_context& tvc, bool keeped_by_block, bool relayed, bool do_not_relay, uint8_t version, master_nodes::master_node_list const &master_node_list)
   {
     crypto::hash h = null_hash;
     size_t blob_size = 0;
@@ -421,7 +453,7 @@ namespace cryptonote
     t_serializable_object_to_blob(tx, bl);
     if (bl.size() == 0 || !get_transaction_hash(tx, h))
       return false;
-    return add_tx(tx, h, bl, get_transaction_weight(tx, bl.size()), tvc, keeped_by_block, relayed, do_not_relay, version);
+    return add_tx(tx, h, bl, get_transaction_weight(tx, bl.size()), tvc, keeped_by_block, relayed, do_not_relay, version, master_node_list);
   }
   //---------------------------------------------------------------------------------
   size_t tx_memory_pool::get_txpool_weight() const
@@ -505,7 +537,9 @@ namespace cryptonote
     }
 
     // this will never remove the first one, but we don't care
-    auto it = --m_txs_by_fee_and_receive_time.end();
+    auto it = m_txs_by_fee_and_receive_time.end();
+    if (it != m_txs_by_fee_and_receive_time.begin())
+      it = std::prev(it);
     while (it != m_txs_by_fee_and_receive_time.begin())
     {
       if (m_txpool_weight <= bytes)
@@ -538,6 +572,7 @@ namespace cryptonote
         return;
       }
     }
+    lock.commit();
     if (changed)
       ++m_cookie;
     if (m_txpool_weight > bytes)
@@ -593,7 +628,7 @@ namespace cryptonote
     return true;
   }
   //---------------------------------------------------------------------------------
-  bool tx_memory_pool::take_tx(const crypto::hash &id, transaction &tx, size_t& tx_weight, uint64_t& fee, bool &relayed, bool &do_not_relay, bool &double_spend_seen)
+  bool tx_memory_pool::take_tx(const crypto::hash &id, transaction &tx, cryptonote::blobdata &txblob, size_t& tx_weight, uint64_t& fee, bool &relayed, bool &do_not_relay, bool &double_spend_seen)
   {
     CRITICAL_REGION_LOCAL(m_transactions_lock);
     CRITICAL_REGION_LOCAL1(m_blockchain);
@@ -609,7 +644,7 @@ namespace cryptonote
         MERROR("Failed to find tx in txpool");
         return false;
       }
-      cryptonote::blobdata txblob = m_blockchain.get_txpool_tx_blob(id);
+      txblob = m_blockchain.get_txpool_tx_blob(id);
       auto ci = m_parsed_tx_cache.find(id);
       if (ci != m_parsed_tx_cache.end())
       {
@@ -634,6 +669,7 @@ namespace cryptonote
       m_blockchain.remove_txpool_tx(id);
       m_txpool_weight -= tx_weight;
       remove_transaction_keyimages(tx, id);
+      lock.commit();
     }
     catch (const std::exception &e)
     {
@@ -718,6 +754,7 @@ namespace cryptonote
           // ignore error
         }
       }
+      lock.commit();
       ++m_cookie;
     }
     return true;
@@ -751,7 +788,7 @@ namespace cryptonote
                 return true;
               }
 
-              if (tx.get_type() != transaction::type_deregister)
+              if (tx.type != txtype::state_change)
                 return true;
 
               tx_verification_context tvc;
@@ -759,7 +796,7 @@ namespace cryptonote
               crypto::hash max_used_block_id = null_hash;
               if (!m_blockchain.check_tx_inputs(tx, max_used_block_height, max_used_block_id, tvc, /*kept_by_block*/ false))
               {
-                LOG_PRINT_L1("TX type: " << transaction::type_to_string(tx.type) << " considered for relaying failed tx inputs check, txid: " << txid << ", reason: " << print_tx_verification_context(tvc, &tx));
+                LOG_PRINT_L1("TX type: " << tx.type << " considered for relaying failed tx inputs check, txid: " << txid << ", reason: " << print_tx_verification_context(tvc, &tx));
                 return true;
               }
             }
@@ -802,6 +839,7 @@ namespace cryptonote
         // continue
       }
     }
+    lock.commit();
   }
   //---------------------------------------------------------------------------------
   size_t tx_memory_pool::get_transactions_count(bool include_unrelayed_txes) const
@@ -1081,15 +1119,96 @@ namespace cryptonote
     }
   }
   //---------------------------------------------------------------------------------
-  bool tx_memory_pool::on_blockchain_inc(uint64_t new_block_height, const crypto::hash& top_block_id)
+  bool tx_memory_pool::on_blockchain_inc(master_nodes::master_node_list const &master_node_list, block const &blk)
   {
     CRITICAL_REGION_LOCAL(m_transactions_lock);
     m_input_cache.clear();
     m_parsed_tx_cache.clear();
+
+    std::vector<transaction> pool_txs;
+    get_transactions(pool_txs);
+    if (pool_txs.empty()) return true;
+
+    // NOTE: For transactions in the pool, on new block received, if a Master
+    // Node changed state any older state changes that the node cannot
+    // transition to now are invalid and cannot be used, so take them out from
+    // the pool.
+
+    // Otherwise multiple state changes can queue up until they are applicable
+    // and be applied on the node.
+    uint64_t const block_height = cryptonote::get_block_height(blk);
+    for (transaction const &pool_tx : pool_txs)
+    {
+      tx_extra_master_node_state_change state_change;
+      crypto::public_key master_node_pubkey;
+      if (pool_tx.type == txtype::state_change &&
+          get_master_node_state_change_from_tx_extra(pool_tx.extra, state_change, blk.major_version))
+      {
+        // TODO(beldex): PERF(beldex): On pop_blocks we return all the TXs to the
+        // pool. The greater the pop_blocks, the more txs that are queued in the
+        // pool, and for every subsequent block you sync, get_transactions has
+        // to allocate these transactions and we have to search every
+        // transaction in the pool every synced block- causing great slowdown.
+
+        // It'd be nice to optimise this or rearchitect the way this pruning is
+        // done to be smarter.
+
+        if (state_change.block_height >= block_height) // NOTE: Can occur if we pop_blocks and old popped state changes are returned to the pool.
+          continue;
+
+        if (master_node_list.get_quorum_pubkey(master_nodes::quorum_type::obligations,
+                                                master_nodes::quorum_group::worker,
+                                                state_change.block_height,
+                                                state_change.master_node_index,
+                                                master_node_pubkey))
+        {
+          crypto::hash tx_hash;
+          if (!get_transaction_hash(pool_tx, tx_hash))
+          {
+            MERROR("Failed to get transaction hash from txpool to check if we can prune a state change");
+            continue;
+          }
+
+          txpool_tx_meta_t meta;
+          if (!m_blockchain.get_txpool_tx_meta(tx_hash, meta))
+          {
+            MERROR("Failed to get tx meta from txpool to check if we can prune a state change");
+            continue;
+          }
+
+          if (meta.kept_by_block) // Do not prune transaction if kept by block (belongs to alt block, so we need incase we switch to alt-chain)
+            continue;
+
+          std::vector<master_nodes::master_node_pubkey_info> master_node_array = master_node_list.get_master_node_list_state({master_node_pubkey});
+
+          // TODO(loki): Temporary HF13 code. We want to use HF14 code for
+          // detecting if a master node can change state for pruning from the
+          // pool, because changing the pool code here is not consensus, but we
+          // want this logic so as to improve the network behaviour regarding
+          // multiple queued up state changes without a hard fork.
+
+          // Once we hard fork to v14 we can just use the blk major version
+          // whole sale.
+          uint8_t enforce_hf_version = std::max((uint8_t)cryptonote::network_version_14, blk.major_version);
+
+          if (master_node_array.empty() ||
+              !master_node_array[0].info->can_transition_to_state(enforce_hf_version, state_change.block_height, state_change.state))
+          {
+            transaction tx;
+            cryptonote::blobdata blob;
+            size_t tx_weight;
+            uint64_t fee;
+            bool relayed, do_not_relay, double_spend_seen;
+            take_tx(tx_hash, tx, blob, tx_weight, fee, relayed, do_not_relay, double_spend_seen);
+          }
+        }
+      }
+    }
+
     return true;
   }
   //---------------------------------------------------------------------------------
-  bool tx_memory_pool::on_blockchain_dec(uint64_t new_block_height, const crypto::hash& top_block_id)
+  bool tx_memory_pool::on_blockchain_dec()
   {
     CRITICAL_REGION_LOCAL(m_transactions_lock);
     m_input_cache.clear();
@@ -1280,6 +1399,7 @@ namespace cryptonote
         }
       }
     }
+    lock.commit();
     if (changed)
       ++m_cookie;
   }
@@ -1440,6 +1560,7 @@ namespace cryptonote
       append_key_images(k_images, tx);
       LOG_PRINT_L2("  added, new block weight " << total_weight << "/" << max_total_weight << ", coinbase " << print_money(best_coinbase));
     }
+    lock.commit();
 
     expected_reward = best_coinbase;
     LOG_PRINT_L2("Block template filled with " << bl.tx_hashes.size() << " txes, weight "
@@ -1505,6 +1626,7 @@ namespace cryptonote
           // continue
         }
       }
+      lock.commit();
     }
     if (n_removed > 0)
       ++m_cookie;
@@ -1543,7 +1665,7 @@ namespace cryptonote
           return false;
         }
 
-        const bool non_standard_tx = (tx.get_type() != transaction::type_standard);
+        const bool non_standard_tx = (tx.type != txtype::standard);
         m_txs_by_fee_and_receive_time.emplace(std::tuple<bool, double, time_t>(non_standard_tx, meta.fee / (double)meta.weight, meta.receive_time), txid);
         m_txpool_weight += meta.weight;
         return true;
@@ -1566,6 +1688,7 @@ namespace cryptonote
           // ignore error
         }
       }
+      lock.commit();
     }
 
     m_cookie = 0;

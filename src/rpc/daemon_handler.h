@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2018, The Monero Project
+// Copyright (c) 2017-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -67,6 +67,8 @@ class DaemonHandler : public RpcHandler
     void handle(const GetTxGlobalOutputIndices::Request& req, GetTxGlobalOutputIndices::Response& res);
 
     void handle(const SendRawTx::Request& req, SendRawTx::Response& res);
+
+    void handle(const SendRawTxHex::Request& req, SendRawTxHex::Response& res);
 
     void handle(const StartMining::Request& req, StartMining::Response& res);
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -37,7 +37,8 @@ using namespace epee;
 #include "common/apply_permutation.h"
 #include "cryptonote_tx_utils.h"
 #include "cryptonote_config.h"
-#include "cryptonote_basic/miner.h"
+#include "blockchain.h"
+#include "cryptonote_core/miner.h"
 #include "cryptonote_basic/tx_extra.h"
 #include "crypto/crypto.h"
 #include "crypto/hash.h"
@@ -146,12 +147,7 @@ namespace cryptonote
   uint64_t governance_reward_formula(uint64_t base_reward)
   {
     return 0;// NO governance planned
-  }
-  
-  uint64_t derive_governance_from_block_reward(network_type nettype, const cryptonote::block &block)
-  {
-    return 0;
-  }  
+  } 
 
   bool block_has_governance_output(network_type nettype, cryptonote::block const &block)
   {
@@ -164,8 +160,10 @@ namespace cryptonote
     return false;// NO governance planned
   }
 
-  
-
+  uint64_t derive_governance_from_block_reward(network_type nettype, const cryptonote::block &block)
+  {
+    return 0;
+  } 
   uint64_t master_node_reward_formula(uint64_t base_reward, int hard_fork_version)
   {
     uint64_t reward = 0;
@@ -173,8 +171,6 @@ namespace cryptonote
         reward = (base_reward / 10) * (MASTER_NODE_BASE_REWARD_PERCENTAGE/10) ;
 	return reward;
   }
-
-
 
   uint64_t get_portion_of_reward(uint64_t portions, uint64_t total_master_node_reward)
   {
@@ -210,18 +206,17 @@ namespace cryptonote
       transaction& tx,
       const blobdata& extra_nonce,
       uint8_t hard_fork_version,
-      const beldex_miner_tx_context &miner_tx_context,
-      const crypto::signature security_signature
-      )
+      const beldex_miner_tx_context &miner_tx_context)
   {
+    const network_type nettype = miner_tx_context.nettype;
+
     tx.vin.clear();
     tx.vout.clear();
     tx.extra.clear();
     tx.output_unlock_times.clear();
-    tx.type = transaction::type_standard;
-    tx.version = (hard_fork_version >= network_version_9_master_nodes) ? transaction::version_3_per_output_unlock_times : transaction::version_2;
+    tx.type    = txtype::standard;
+    tx.version = transaction::get_min_version_for_hf(hard_fork_version, nettype);
 
-    const network_type                                              nettype           = miner_tx_context.nettype;
     const crypto::public_key                                       &master_node_key  = miner_tx_context.snode_winner_key;
     const std::vector<std::pair<account_public_address, uint64_t>> &master_node_info =
       miner_tx_context.snode_winner_info.empty() ?
@@ -445,21 +440,13 @@ namespace cryptonote
     }
 
     if (tx_params.v4_allow_tx_types)
-    {
-      tx.version = transaction::version_4_tx_types;
-      tx.type    = transaction::type_standard;
-    }
+      tx.version = txversion::v4_tx_types;
+    else if (tx_params.v3_per_output_unlock)
+      tx.version = txversion::v3_per_output_unlock_times;
     else
     {
-      if (tx_params.v3_per_output_unlock)
-      {
-        tx.version = transaction::version_3_per_output_unlock_times;
-      }
-      else
-      {
-        tx.version     = tx_params.v2_rct ? 2 : 1;
-        tx.unlock_time = unlock_time;
-      }
+      tx.version     = tx_params.v2_rct ? txversion::v2_ringct : txversion::v1;
+      tx.unlock_time = unlock_time;
     }
 
 
@@ -473,16 +460,7 @@ namespace cryptonote
     std::vector<tx_extra_field> tx_extra_fields;
     if (parse_tx_extra(tx.extra, tx_extra_fields))
     {
-      // TODO(doyle): FIXME(doyle): LOOK AT ME. Introduced in commmit
-      // c6d387184e05437d8f68a4227d739ad28568aa5e on Monero as part of the
-      // deprecating process of payment IDs. I've set it to false, but it was
-      // actually true before. If we want to take this route as the way to
-      // deprecate payment ID's by including it in every transaction, we should
-      // make this true.
-
-      // But if we have a better way, this may not be necessary.
-      //   - Jan 30, 2019
-      bool add_dummy_payment_id = false;
+      bool add_dummy_payment_id = true;
 
       tx_extra_nonce extra_nonce;
       if (find_tx_extra_field_by_type(tx_extra_fields, extra_nonce))
@@ -664,16 +642,16 @@ namespace cryptonote
     bool found_change_already = false;
     for(const tx_destination_entry& dst_entr: destinations)
     {
-      CHECK_AND_ASSERT_MES(dst_entr.amount > 0 || tx.version > 1, false, "Destination with wrong amount: " << dst_entr.amount);
+      CHECK_AND_ASSERT_MES(dst_entr.amount > 0 || tx.version >= txversion::v2_ringct, false, "Destination with wrong amount: " << dst_entr.amount);
       crypto::public_key out_eph_public_key;
 
       bool this_dst_is_change_addr = false;
-      hwdev.generate_output_ephemeral_keys(tx.version, this_dst_is_change_addr, sender_account_keys, txkey_pub, tx_key,
+      hwdev.generate_output_ephemeral_keys(static_cast<uint16_t>(tx.version), this_dst_is_change_addr, sender_account_keys, txkey_pub, tx_key,
                                            dst_entr, change_addr, output_index,
                                            need_additional_txkeys, additional_tx_keys,
                                            additional_tx_public_keys, amount_keys, out_eph_public_key);
 
-      if (tx.version > 2)
+      if (tx.version >= txversion::v3_per_output_unlock_times)
       {
         if (change_addr && *change_addr == dst_entr && this_dst_is_change_addr && !found_change_already)
         {
@@ -756,7 +734,7 @@ namespace cryptonote
       MDEBUG("Null secret key, skipping signatures");
     }
 
-    if (tx.version == 1)
+    if (tx.version == txversion::v1)
     {
       //generate ring signatures
       crypto::hash tx_prefix_hash;
@@ -969,9 +947,59 @@ namespace cryptonote
     bl.minor_version = 0;
     bl.timestamp = 0;
     bl.nonce = nonce;
-    miner::find_nonce_for_given_block(bl, 1, 0);
+    miner::find_nonce_for_given_block(NULL, bl, 1, 0);
     bl.invalidate_hashes();
     return true;
   }
   //---------------------------------------------------------------
+  void get_altblock_longhash(const block& b, crypto::hash& res, const uint64_t main_height, const uint64_t height, const uint64_t seed_height, const crypto::hash& seed_hash)
+  {
+    blobdata bd = get_block_hashing_blob(b);
+    rx_alt_slowhash(main_height, seed_height, seed_hash.data, bd.data(), bd.size(), res.data);
+  }
+
+  bool get_block_longhash(const Blockchain *pbc, const block &b, crypto::hash &res, const uint64_t height, const int miners)
+  {
+    const blobdata bd                 = get_block_hashing_blob(b);
+    const uint8_t hf_version          = b.major_version;
+    crypto::cn_slow_hash_type cn_type = cn_slow_hash_type::heavy_v1;
+
+#if defined(BELDEX_ENABLE_INTEGRATION_TEST_HOOKS)
+    const_cast<int &>(miners) = 0;
+#endif
+
+    if (hf_version >= network_version_13_checkpointing) {
+      uint64_t seed_height;
+      if (rx_needhash(height, &seed_height)) {
+        crypto::hash hash;
+        if (pbc != NULL)
+          hash = pbc->get_pending_block_id_by_height(seed_height);
+        else
+          memset(&hash, 0, sizeof(hash));  // only happens when generating genesis block
+        rx_seedhash(seed_height, hash.data, miners);
+      }
+      rx_slow_hash(bd.data(), bd.size(), res.data, miners);
+      return true;
+    }
+
+    if (hf_version >= network_version_11_infinite_staking)
+      cn_type = cn_slow_hash_type::turtle_lite_v2;
+    else if (hf_version >= network_version_7)
+      cn_type = crypto::cn_slow_hash_type::heavy_v2;
+
+    crypto::cn_slow_hash(bd.data(), bd.size(), res, cn_type);
+    return true;
+  }
+
+  crypto::hash get_block_longhash(const Blockchain *pbc, const block& b, const uint64_t height, const int miners)
+  {
+    crypto::hash p = crypto::null_hash;
+    get_block_longhash(pbc, b, p, height, miners);
+    return p;
+  }
+
+  void get_block_longhash_reorg(const uint64_t split_height)
+  {
+    rx_reorg(split_height);
+  }
 }

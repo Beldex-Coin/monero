@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // Copyright (c)      2018, The Beldex Project
 // 
 // All rights reserved.
@@ -29,6 +29,8 @@
 
 #include <boost/range/adaptor/reversed.hpp>
 
+#include "cryptonote_core/master_node_rules.h"
+#include "checkpoints/checkpoints.h"
 #include "string_tools.h"
 #include "blockchain_db.h"
 #include "cryptonote_basic/cryptonote_format_utils.h"
@@ -122,8 +124,10 @@ void BlockchainDB::pop_block()
   pop_block(blk, txs);
 }
 
-void BlockchainDB::add_transaction(const crypto::hash& blk_hash, const transaction& tx, const crypto::hash* tx_hash_ptr, const crypto::hash* tx_prunable_hash_ptr)
+void BlockchainDB::add_transaction(const crypto::hash& blk_hash, const std::pair<transaction, blobdata>& txp, const crypto::hash* tx_hash_ptr, const crypto::hash* tx_prunable_hash_ptr)
 {
+  const transaction &tx = txp.first;
+
   bool miner_tx = false;
   crypto::hash tx_hash, tx_prunable_hash;
   if (!tx_hash_ptr)
@@ -138,10 +142,10 @@ void BlockchainDB::add_transaction(const crypto::hash& blk_hash, const transacti
   }
 
   bool has_blacklisted_outputs = false;
-  if (tx.version >= 2)
+  if (tx.version >= cryptonote::txversion::v2_ringct)
   {
     if (!tx_prunable_hash_ptr)
-      tx_prunable_hash = get_transaction_prunable_hash(tx);
+      tx_prunable_hash = get_transaction_prunable_hash(tx, &txp.second);
     else
       tx_prunable_hash = *tx_prunable_hash_ptr;
 
@@ -176,7 +180,7 @@ void BlockchainDB::add_transaction(const crypto::hash& blk_hash, const transacti
     }
   }
 
-  uint64_t tx_id = add_transaction_data(blk_hash, tx, tx_hash, tx_prunable_hash);
+  uint64_t tx_id = add_transaction_data(blk_hash, txp, tx_hash, tx_prunable_hash);
 
   std::vector<uint64_t> amount_output_indices(tx.vout.size());
 
@@ -185,7 +189,7 @@ void BlockchainDB::add_transaction(const crypto::hash& blk_hash, const transacti
   for (uint64_t i = 0; i < tx.vout.size(); ++i)
   {
     uint64_t unlock_time = 0;
-    if (tx.version > 2)
+    if (tx.version >= cryptonote::txversion::v3_per_output_unlock_times)
     {
       unlock_time = tx.output_unlock_times[i];
     }
@@ -196,7 +200,7 @@ void BlockchainDB::add_transaction(const crypto::hash& blk_hash, const transacti
 
     // miner v2 txes have their coinbase output in one single out to save space,
     // and we store them as rct outputs with an identity mask
-    if (miner_tx && tx.version >= 2)
+    if (miner_tx && tx.version >= cryptonote::txversion::v2_ringct)
     {
       cryptonote::tx_out vout = tx.vout[i];
       const rct::key commitment = rct::zeroCommit(vout.amount);
@@ -207,7 +211,7 @@ void BlockchainDB::add_transaction(const crypto::hash& blk_hash, const transacti
     else
     {
       amount_output_indices[i] = add_output(tx_hash, tx.vout[i], i, unlock_time,
-        tx.version > 1 ? &tx.rct_signatures.outPk[i].mask : NULL);
+        tx.version >= cryptonote::txversion::v2_ringct ? &tx.rct_signatures.outPk[i].mask : NULL);
     }
   }
 
@@ -217,19 +221,19 @@ void BlockchainDB::add_transaction(const crypto::hash& blk_hash, const transacti
   add_tx_amount_output_indices(tx_id, amount_output_indices);
 }
 
-uint64_t BlockchainDB::add_block( const block& blk
+uint64_t BlockchainDB::add_block( const std::pair<block, blobdata>& blck
                                 , size_t block_weight
                                 , uint64_t long_term_block_weight
                                 , const difficulty_type& cumulative_difficulty
                                 , const uint64_t& coins_generated
-                                , const std::vector<transaction>& txs
+                                , const std::vector<std::pair<transaction, blobdata>>& txs
                                 )
 {
+  const block &blk = blck.first;
+
   // sanity
   if (blk.tx_hashes.size() != txs.size())
     throw std::runtime_error("Inconsistent tx/hashes sizes");
-
-  block_txn_start(false);
 
   TIME_MEASURE_START(time1);
   crypto::hash blk_hash = get_block_hash(blk);
@@ -243,17 +247,17 @@ uint64_t BlockchainDB::add_block( const block& blk
   time1 = epee::misc_utils::get_tick_count();
 
   uint64_t num_rct_outs = 0;
-  add_transaction(blk_hash, blk.miner_tx);
-  if (blk.miner_tx.version >= 2)
+  add_transaction(blk_hash, std::make_pair(blk.miner_tx, tx_to_blob(blk.miner_tx)));
+  if (blk.miner_tx.version >= cryptonote::txversion::v2_ringct)
     num_rct_outs += blk.miner_tx.vout.size();
 
   int tx_i = 0;
   crypto::hash tx_hash = crypto::null_hash;
-  for (const transaction& tx : txs)
+  for (const std::pair<transaction, blobdata>& tx : txs)
   {
     tx_hash = blk.tx_hashes[tx_i];
     add_transaction(blk_hash, tx, &tx_hash);
-    for (const auto &vout: tx.vout)
+    for (const auto &vout: tx.first.vout)
     {
       if (vout.amount == 0)
         ++num_rct_outs;
@@ -270,8 +274,6 @@ uint64_t BlockchainDB::add_block( const block& blk
   time_add_block1 += time1;
 
   m_hardfork->add(blk, prev_height);
-
-  block_txn_stop();
 
   ++num_calls;
 
@@ -412,14 +414,91 @@ void BlockchainDB::show_stats()
   );
 }
 
-void BlockchainDB::fixup()
+void BlockchainDB::fixup(fixup_context const context)
 {
+  (void)context;
   if (is_read_only()) {
     LOG_PRINT_L1("Database is opened read only - skipping fixup check");
     return;
   }
 
   set_batch_transactions(true);
+}
+
+std::vector<checkpoint_t> BlockchainDB::get_checkpoints_range(uint64_t start, uint64_t end, size_t num_desired_checkpoints) const
+{
+  std::vector<checkpoint_t> result;
+  checkpoint_t top_checkpoint = {};
+  if (!get_top_checkpoint(top_checkpoint))
+    return result;
+
+  if (top_checkpoint.height < std::min(start, end))
+    return result;
+
+  if (end > start)
+    end = std::min(top_checkpoint.height, end);
+
+  if (num_desired_checkpoints == BlockchainDB::GET_ALL_CHECKPOINTS)
+    num_desired_checkpoints = std::numeric_limits<decltype(num_desired_checkpoints)>::max();
+  else
+    result.reserve(num_desired_checkpoints);
+
+  for (uint64_t height = start;
+       height != end && result.size() < num_desired_checkpoints;
+       )
+  {
+    checkpoint_t checkpoint;
+    if (get_block_checkpoint(height, checkpoint))
+      result.push_back(checkpoint);
+
+    if (end >= start) height++;
+    else height--;
+  }
+
+  if (result.size() < num_desired_checkpoints)
+  {
+    // NOTE: Inclusive of end height
+    checkpoint_t checkpoint;
+    if (get_block_checkpoint(end, checkpoint))
+      result.push_back(checkpoint);
+  }
+
+  return result;
+}
+
+bool BlockchainDB::get_immutable_checkpoint(checkpoint_t *immutable_checkpoint, uint64_t block_height) const
+{
+  size_t constexpr NUM_CHECKPOINTS = service_nodes::CHECKPOINT_NUM_CHECKPOINTS_FOR_CHAIN_FINALITY;
+  static_assert(NUM_CHECKPOINTS == 2,
+                "Expect checkpoint finality to be 2, otherwise the immutable logic needs to check for any hardcoded "
+                "checkpoints inbetween");
+
+  std::vector<checkpoint_t> checkpoints = get_checkpoints_range(block_height, 0, NUM_CHECKPOINTS);
+
+  if (checkpoints.empty())
+    return false;
+
+  checkpoint_t *checkpoint_ptr = nullptr;
+  if (checkpoints[0].type != checkpoint_type::service_node) // checkpoint[0] is the first closest checkpoint that is <= my height
+  {
+    checkpoint_ptr = &checkpoints[0]; // Must be hard-coded then, always immutable
+  }
+  else if (checkpoints.size() == NUM_CHECKPOINTS)
+  {
+    // NOTE: The first checkpoint is a service node checkpoint. Go back
+    // 1 checkpoint, which will either be another service node checkpoint or
+    // a predefined one.
+    checkpoint_ptr = &checkpoints[1];
+  }
+  else
+  {
+    return false; // NOTE: Only one service node checkpoint recorded, we can override this checkpoint.
+  }
+
+  if (immutable_checkpoint)
+    *immutable_checkpoint = std::move(*checkpoint_ptr);
+
+  return true;
 }
 
 }  // namespace cryptonote

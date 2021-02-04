@@ -1,5 +1,5 @@
 # Copyright (c) 2018, The Beldex Project
-# Copyright (c) 2014-2018, The Monero Project
+# Copyright (c) 2014-2019, The Monero Project
 #
 # All rights reserved.
 #
@@ -40,15 +40,20 @@ set(crypto_sources
   hash-extra-jh.c
   hash-extra-skein.c
   hash.c
+  hmac-keccak.c
   jh.c
   keccak.c
   oaes_lib.c
   random.c
   skein.c
-  slow-hash.c
-  cn_conceal.cpp
-  tree-hash.c
-  aux_hash.c)
+  cn_heavy_hash_hard_arm.cpp
+  cn_heavy_hash_hard_intel.cpp
+  cn_heavy_hash_soft.cpp
+  cn_turtle_hash.c
+  rx-slow-hash.c
+  tree-hash.c)
+
+include_directories(${RANDOMX_INCLUDE})
 
 set(crypto_headers)
 
@@ -62,6 +67,7 @@ set(crypto_private_headers
   groestl_tables.h
   hash-ops.h
   hash.h
+  hmac-keccak.h
   initializer.h
   jh.h
   keccak.h
@@ -69,11 +75,8 @@ set(crypto_private_headers
   oaes_lib.h
   random.h
   skein.h
-  aux_hash.h
-  cn_conceal.hpp
   skein_port.h
-  soft_aes.hpp
-  coin_algos.hpp)
+  cn_heavy_hash.hpp)
 
 beldex_private_headers(cncrypto
   ${crypto_private_headers})
@@ -84,20 +87,11 @@ beldex_add_library(cncrypto
 target_link_libraries(cncrypto
   PUBLIC
     epee
+    randomx
     ${Boost_SYSTEM_LIBRARY}
     ${SODIUM_LIBRARY}
   PRIVATE
     ${EXTRA_LIBRARIES})
-
-	if (ARM)
-  option(NO_OPTIMIZED_MULTIPLY_ON_ARM
-	   "Compute multiply using generic C implementation instead of ARM ASM" OFF)
-  if(NO_OPTIMIZED_MULTIPLY_ON_ARM)
-    message(STATUS "Using generic C implementation for multiply")
-    set_property(SOURCE slow-hash.c
-      PROPERTY COMPILE_DEFINITIONS "NO_OPTIMIZED_MULTIPLY_ON_ARM")
-  endif()
-endif()
 
 # Because of the way Qt works on android with JNI, the code does not live in the main android thread
 # So this code runs with a 1 MB default stack size. 

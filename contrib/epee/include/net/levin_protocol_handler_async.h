@@ -99,6 +99,8 @@ public:
   template<class callback_t>
   bool for_connection(const boost::uuids::uuid &connection_id, const callback_t &cb);
   size_t get_connections_count();
+  size_t get_out_connections_count();
+  size_t get_in_connections_count();
   void set_handler(levin_commands_handler<t_connection_context>* handler, void (*destroy)(levin_commands_handler<t_connection_context>*) = NULL);
 
   async_protocol_handler_config():m_pcommands_handler(NULL), m_pcommands_handler_destroy(NULL), m_max_packet_size(LEVIN_DEFAULT_MAX_PACKET_SIZE), m_invoke_timeout(LEVIN_DEFAULT_TIMEOUT_PRECONFIGURED)
@@ -266,7 +268,7 @@ public:
             m_pservice_endpoint(psnd_hndlr), 
             m_config(config), 
             m_connection_context(conn_context), 
-            m_cache_in_buffer(256 * 1024),
+            m_cache_in_buffer(4 * 1024),
             m_state(stream_state_head)
   {
     m_close_called = 0;

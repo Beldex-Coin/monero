@@ -35,8 +35,11 @@
 #include <string>
 #include <cfenv>
 
+#include "misc_log_ex.h"
+#include "warnings.h"
 #include "crypto/hash.h"
 #include "crypto/variant2_int_sqrt.h"
+#include "cryptonote_core/cryptonote_tx_utils.h"
 #include "../io.h"
 
 using namespace std;
@@ -51,6 +54,9 @@ typedef crypto::hash chash;
     HASH_X_MACRO(extra_groestl,   "extra-groestl") \
     HASH_X_MACRO(extra_jh,        "extra-jh") \
     HASH_X_MACRO(extra_skein,     "extra-skein") \
+    HASH_X_MACRO(heavy_v1,        "heavy-v1") \
+    HASH_X_MACRO(heavy_v2,        "heavy-v2") \
+    HASH_X_MACRO(turtle_light_v2, "turtle-light-v2") \
     HASH_X_MACRO(count,           "INVALID_COUNT")
 
 #define HASH_X_MACRO(hash_type, str) hash_type,
@@ -66,6 +72,8 @@ int test_variant2_int_sqrt();
 int test_variant2_int_sqrt_ref();
 
 int main(int argc, char *argv[]) {
+  TRY_ENTRY();
+
   fstream input;
   vector<char> data;
   chash expected, actual;
@@ -152,7 +160,9 @@ int main(int argc, char *argv[]) {
       case hash_type::extra_groestl:   hash_extra_groestl(buf, len, actual_byte_ptr); break;
       case hash_type::extra_jh:        hash_extra_jh     (buf, len, actual_byte_ptr); break;
       case hash_type::extra_skein:     hash_extra_skein  (buf, len, actual_byte_ptr); break;
-
+      case hash_type::heavy_v1:        cn_slow_hash      (buf, len, actual, cn_slow_hash_type::heavy_v1); break;
+      case hash_type::heavy_v2:        cn_slow_hash      (buf, len, actual, cn_slow_hash_type::heavy_v2); break;
+      case hash_type::turtle_light_v2: cn_slow_hash      (buf, len, actual, cn_slow_hash_type::turtle_lite_v2); break;
 
       default:
       {
@@ -184,6 +194,7 @@ int main(int argc, char *argv[]) {
     }
   }
   return error ? 1 : 0;
+  CATCH_ENTRY_L0("main", 1);
 }
 
 #if defined(__x86_64__) || (defined(_MSC_VER) && defined(_WIN64))

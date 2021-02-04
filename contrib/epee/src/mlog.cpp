@@ -48,7 +48,7 @@
 
 #define MLOG_BASE_FORMAT "%datetime{%Y-%M-%d %H:%m:%s.%g}\t%thread\t%level\t%logger\t%loc\t%msg"
 
-#define MLOG_LOG(x) CINFO(el::base::Writer,el::base::DispatchAction::FileOnlyLog,BELDEX_DEFAULT_LOG_CATEGORY) << x
+#define MLOG_LOG(x) CINFO(el::base::Writer,el::base::DispatchAction::FileOnlyLog,LOKI_DEFAULT_LOG_CATEGORY) << x
 
 using namespace epee;
 
@@ -100,7 +100,7 @@ static const char *get_default_categories(int level)
   switch (level)
   {
     case 0:
-      categories = "*:WARNING,net:FATAL,net.http:FATAL,net.p2p:FATAL,net.cn:FATAL,global:INFO,verify:FATAL,stacktrace:INFO,logging:INFO,msgwriter:INFO";
+      categories = "*:WARNING,net:FATAL,net.http:FATAL,net.ssl:FATAL,net.p2p:FATAL,net.cn:FATAL,global:INFO,verify:FATAL,serialization:FATAL,logging:INFO,msgwriter:INFO";
       break;
     case 1:
       categories = "*:INFO,global:INFO,stacktrace:INFO,logging:INFO,msgwriter:INFO,perf.*:DEBUG";
@@ -150,7 +150,7 @@ void mlog_configure(const std::string &filename_base, bool console, const std::s
   el::Configurations c;
   c.setGlobally(el::ConfigurationType::Filename, filename_base);
   c.setGlobally(el::ConfigurationType::ToFile, "true");
-  const char *log_format = getenv("BELDEX_LOG_FORMAT");
+  const char *log_format = getenv("LOKI_LOG_FORMAT");
   if (!log_format)
     log_format = MLOG_BASE_FORMAT;
   c.setGlobally(el::ConfigurationType::Format, log_format);
@@ -224,12 +224,12 @@ void mlog_configure(const std::string &filename_base, bool console, const std::s
     }
   });
   mlog_set_common_prefix();
-  const char *beldex_log = getenv("BELDEX_LOGS");
-  if (!beldex_log)
+  const char *loki_log = getenv("LOKI_LOGS");
+  if (!loki_log)
   {
-    beldex_log = get_default_categories(0);
+    loki_log = get_default_categories(0);
   }
-  mlog_set_log(beldex_log);
+  mlog_set_log(loki_log);
 #ifdef WIN32
   EnableVTMode();
 #endif

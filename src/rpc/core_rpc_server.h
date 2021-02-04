@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -40,6 +40,13 @@
 #include "p2p/net_node.h"
 #include "cryptonote_protocol/cryptonote_protocol_handler.h"
 
+#if defined(BELDEX_ENABLE_INTEGRATION_TEST_HOOKS)
+#include "common/beldex_integration_test_hooks.h"
+#endif
+
+#undef beldex_DEFAULT_LOG_CATEGORY
+#define beldex_DEFAULT_LOG_CATEGORY "daemon.rpc"
+
 // yes, epee doesn't properly use its full namespace when calling its
 // functions from macros.  *sigh*
 using namespace epee;
@@ -53,9 +60,16 @@ namespace cryptonote
   {
   public:
 
+    static const command_line::arg_descriptor<bool> arg_public_node;
     static const command_line::arg_descriptor<std::string, false, true, 2> arg_rpc_bind_port;
     static const command_line::arg_descriptor<std::string> arg_rpc_restricted_bind_port;
     static const command_line::arg_descriptor<bool> arg_restricted_rpc;
+    static const command_line::arg_descriptor<std::string> arg_rpc_ssl;
+    static const command_line::arg_descriptor<std::string> arg_rpc_ssl_private_key;
+    static const command_line::arg_descriptor<std::string> arg_rpc_ssl_certificate;
+    static const command_line::arg_descriptor<std::string> arg_rpc_ssl_ca_certificates;
+    static const command_line::arg_descriptor<std::vector<std::string>> arg_rpc_ssl_allowed_fingerprints;
+    static const command_line::arg_descriptor<bool> arg_rpc_ssl_allow_any_cert;
     static const command_line::arg_descriptor<std::string> arg_bootstrap_daemon_address;
     static const command_line::arg_descriptor<std::string> arg_bootstrap_daemon_login;
 
@@ -109,12 +123,11 @@ namespace cryptonote
       MAP_URI_AUTO_JON2_IF("/stop_daemon", on_stop_daemon, COMMAND_RPC_STOP_DAEMON, !m_restricted)
       MAP_URI_AUTO_JON2("/get_info", on_get_info, COMMAND_RPC_GET_INFO)
       MAP_URI_AUTO_JON2("/getinfo", on_get_info, COMMAND_RPC_GET_INFO)
+      MAP_URI_AUTO_JON2_IF("/get_net_stats", on_get_net_stats, COMMAND_RPC_GET_NET_STATS, !m_restricted)
       MAP_URI_AUTO_JON2("/get_limit", on_get_limit, COMMAND_RPC_GET_LIMIT)
       MAP_URI_AUTO_JON2_IF("/set_limit", on_set_limit, COMMAND_RPC_SET_LIMIT, !m_restricted)
       MAP_URI_AUTO_JON2_IF("/out_peers", on_out_peers, COMMAND_RPC_OUT_PEERS, !m_restricted)
       MAP_URI_AUTO_JON2_IF("/in_peers", on_in_peers, COMMAND_RPC_IN_PEERS, !m_restricted)
-      MAP_URI_AUTO_JON2_IF("/start_save_graph", on_start_save_graph, COMMAND_RPC_START_SAVE_GRAPH, !m_restricted)
-      MAP_URI_AUTO_JON2_IF("/stop_save_graph", on_stop_save_graph, COMMAND_RPC_STOP_SAVE_GRAPH, !m_restricted)
       MAP_URI_AUTO_JON2("/get_outs", on_get_outs, COMMAND_RPC_GET_OUTPUTS)      
       MAP_URI_AUTO_JON2_IF("/update", on_update, COMMAND_RPC_UPDATE, !m_restricted)
       MAP_URI_AUTO_BIN2("/get_output_distribution.bin", on_get_output_distribution_bin, COMMAND_RPC_GET_OUTPUT_DISTRIBUTION)
@@ -145,6 +158,7 @@ namespace cryptonote
         MAP_JON_RPC_WE("hard_fork_info",         on_hard_fork_info,             COMMAND_RPC_HARD_FORK_INFO)
         MAP_JON_RPC_WE_IF("set_bans",            on_set_bans,                   COMMAND_RPC_SETBANS, !m_restricted)
         MAP_JON_RPC_WE_IF("get_bans",            on_get_bans,                   COMMAND_RPC_GETBANS, !m_restricted)
+        MAP_JON_RPC_WE_IF("banned",              on_banned,                     COMMAND_RPC_BANNED, !m_restricted)
         MAP_JON_RPC_WE_IF("flush_txpool",        on_flush_txpool,               COMMAND_RPC_FLUSH_TRANSACTION_POOL, !m_restricted)
         MAP_JON_RPC_WE("get_output_histogram",   on_get_output_histogram,       COMMAND_RPC_GET_OUTPUT_HISTOGRAM)
         MAP_JON_RPC_WE("get_version",            on_get_version,                COMMAND_RPC_GET_VERSION)
@@ -160,16 +174,20 @@ namespace cryptonote
         //
         // Beldex
         //
-        MAP_JON_RPC_WE("get_quorum_state",                       on_get_quorum_state, COMMAND_RPC_GET_QUORUM_STATE)
-        MAP_JON_RPC_WE("get_quorum_state_batched",               on_get_quorum_state_batched, COMMAND_RPC_GET_QUORUM_STATE_BATCHED)
-        MAP_JON_RPC_WE("get_master_node_registration_cmd_raw",  on_get_master_node_registration_cmd_raw, COMMAND_RPC_GET_MASTER_NODE_REGISTRATION_CMD_RAW)
-        MAP_JON_RPC_WE("get_master_node_blacklisted_key_images",on_get_master_node_blacklisted_key_images, COMMAND_RPC_GET_MASTER_NODE_BLACKLISTED_KEY_IMAGES)
-        MAP_JON_RPC_WE("get_master_node_registration_cmd",      on_get_master_node_registration_cmd, COMMAND_RPC_GET_MASTER_NODE_REGISTRATION_CMD)
-        MAP_JON_RPC_WE("get_master_node_key",                   on_get_master_node_key, COMMAND_RPC_GET_MASTER_NODE_KEY)
-        MAP_JON_RPC_WE("get_master_nodes",                      on_get_master_nodes, COMMAND_RPC_GET_MASTER_NODES)
-        MAP_JON_RPC_WE("get_all_master_nodes",                  on_get_all_master_nodes, COMMAND_RPC_GET_MASTER_NODES)
-        MAP_JON_RPC_WE("get_all_master_nodes_keys",             on_get_all_master_nodes_keys, COMMAND_RPC_GET_ALL_MASTER_NODES_KEYS)
-        MAP_JON_RPC_WE("get_staking_requirement",                on_get_staking_requirement, COMMAND_RPC_GET_STAKING_REQUIREMENT)
+        MAP_JON_RPC_WE("get_quorum_state",                          on_get_quorum_state, COMMAND_RPC_GET_QUORUM_STATE)
+        MAP_JON_RPC_WE_IF("get_master_node_registration_cmd_raw",  on_get_master_node_registration_cmd_raw, COMMAND_RPC_GET_MASTER_NODE_REGISTRATION_CMD_RAW, !m_restricted)
+        MAP_JON_RPC_WE("get_master_node_blacklisted_key_images",   on_get_master_node_blacklisted_key_images, COMMAND_RPC_GET_MASTER_NODE_BLACKLISTED_KEY_IMAGES)
+        MAP_JON_RPC_WE_IF("get_master_node_registration_cmd",      on_get_master_node_registration_cmd, COMMAND_RPC_GET_MASTER_NODE_REGISTRATION_CMD, !m_restricted)
+        MAP_JON_RPC_WE_IF("get_master_node_key",                   on_get_master_node_key, COMMAND_RPC_GET_MASTER_NODE_KEY, !m_restricted)
+        MAP_JON_RPC_WE("get_master_nodes",                         on_get_master_nodes, COMMAND_RPC_GET_MASTER_NODES)
+        MAP_JON_RPC_WE("get_all_master_nodes",                     on_get_all_master_nodes, COMMAND_RPC_GET_MASTER_NODES)
+        MAP_JON_RPC_WE("get_all_master_nodes_keys",                on_get_all_master_nodes_keys, COMMAND_RPC_GET_ALL_MASTER_NODES_KEYS)
+        MAP_JON_RPC_WE("get_n_master_nodes",                       on_get_n_master_nodes, COMMAND_RPC_GET_N_MASTER_NODES)
+        MAP_JON_RPC_WE("get_staking_requirement",                   on_get_staking_requirement, COMMAND_RPC_GET_STAKING_REQUIREMENT)
+        MAP_JON_RPC_WE("get_checkpoints",                          on_get_checkpoints, COMMAND_RPC_GET_CHECKPOINTS)
+        MAP_JON_RPC_WE_IF("perform_blockchain_test",                on_perform_blockchain_test, COMMAND_RPC_PERFORM_BLOCKCHAIN_TEST, !m_restricted)
+        MAP_JON_RPC_WE_IF("storage_server_ping",                    on_storage_server_ping, COMMAND_RPC_STORAGE_SERVER_PING, !m_restricted)
+        MAP_JON_RPC_WE("get_master_nodes_state_changes",           on_get_master_nodes_state_changes, COMMAND_RPC_GET_MN_STATE_CHANGES)
       END_JSON_RPC_MAP()
     END_URI_MAP2()
 
@@ -188,6 +206,7 @@ namespace cryptonote
     bool on_get_outs_bin(const COMMAND_RPC_GET_OUTPUTS_BIN::request& req, COMMAND_RPC_GET_OUTPUTS_BIN::response& res, const connection_context *ctx = NULL);
     bool on_get_outs(const COMMAND_RPC_GET_OUTPUTS::request& req, COMMAND_RPC_GET_OUTPUTS::response& res, const connection_context *ctx = NULL);
     bool on_get_info(const COMMAND_RPC_GET_INFO::request& req, COMMAND_RPC_GET_INFO::response& res, const connection_context *ctx = NULL);
+    bool on_get_net_stats(const COMMAND_RPC_GET_NET_STATS::request& req, COMMAND_RPC_GET_NET_STATS::response& res, const connection_context *ctx = NULL);
     bool on_save_bc(const COMMAND_RPC_SAVE_BC::request& req, COMMAND_RPC_SAVE_BC::response& res, const connection_context *ctx = NULL);
     bool on_get_peer_list(const COMMAND_RPC_GET_PEER_LIST::request& req, COMMAND_RPC_GET_PEER_LIST::response& res, const connection_context *ctx = NULL);
     bool on_set_log_hash_rate(const COMMAND_RPC_SET_LOG_HASH_RATE::request& req, COMMAND_RPC_SET_LOG_HASH_RATE::response& res, const connection_context *ctx = NULL);
@@ -202,8 +221,6 @@ namespace cryptonote
     bool on_set_limit(const COMMAND_RPC_SET_LIMIT::request& req, COMMAND_RPC_SET_LIMIT::response& res, const connection_context *ctx = NULL);
     bool on_out_peers(const COMMAND_RPC_OUT_PEERS::request& req, COMMAND_RPC_OUT_PEERS::response& res, const connection_context *ctx = NULL);
     bool on_in_peers(const COMMAND_RPC_IN_PEERS::request& req, COMMAND_RPC_IN_PEERS::response& res, const connection_context *ctx = NULL);
-    bool on_start_save_graph(const COMMAND_RPC_START_SAVE_GRAPH::request& req, COMMAND_RPC_START_SAVE_GRAPH::response& res, const connection_context *ctx = NULL);
-    bool on_stop_save_graph(const COMMAND_RPC_STOP_SAVE_GRAPH::request& req, COMMAND_RPC_STOP_SAVE_GRAPH::response& res, const connection_context *ctx = NULL);
     bool on_update(const COMMAND_RPC_UPDATE::request& req, COMMAND_RPC_UPDATE::response& res, const connection_context *ctx = NULL);
     bool on_get_output_distribution_bin(const COMMAND_RPC_GET_OUTPUT_DISTRIBUTION::request& req, COMMAND_RPC_GET_OUTPUT_DISTRIBUTION::response& res, const connection_context *ctx = NULL);
     bool on_pop_blocks(const COMMAND_RPC_POP_BLOCKS::request& req, COMMAND_RPC_POP_BLOCKS::response& res, const connection_context *ctx = NULL);
@@ -229,6 +246,7 @@ namespace cryptonote
     bool on_hard_fork_info(const COMMAND_RPC_HARD_FORK_INFO::request& req, COMMAND_RPC_HARD_FORK_INFO::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
     bool on_set_bans(const COMMAND_RPC_SETBANS::request& req, COMMAND_RPC_SETBANS::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
     bool on_get_bans(const COMMAND_RPC_GETBANS::request& req, COMMAND_RPC_GETBANS::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
+    bool on_banned(const COMMAND_RPC_BANNED::request& req, COMMAND_RPC_BANNED::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
     bool on_flush_txpool(const COMMAND_RPC_FLUSH_TRANSACTION_POOL::request& req, COMMAND_RPC_FLUSH_TRANSACTION_POOL::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
     bool on_get_output_histogram(const COMMAND_RPC_GET_OUTPUT_HISTOGRAM::request& req, COMMAND_RPC_GET_OUTPUT_HISTOGRAM::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
     bool on_get_version(const COMMAND_RPC_GET_VERSION::request& req, COMMAND_RPC_GET_VERSION::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
@@ -242,23 +260,69 @@ namespace cryptonote
     bool on_prune_blockchain(const COMMAND_RPC_PRUNE_BLOCKCHAIN::request& req, COMMAND_RPC_PRUNE_BLOCKCHAIN::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
 
     //
-    // Beldex
+    // Loki
     //
     bool on_get_quorum_state(const COMMAND_RPC_GET_QUORUM_STATE::request& req, COMMAND_RPC_GET_QUORUM_STATE::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
-    bool on_get_quorum_state_batched(const COMMAND_RPC_GET_QUORUM_STATE_BATCHED::request& req, COMMAND_RPC_GET_QUORUM_STATE_BATCHED::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
     bool on_get_master_node_registration_cmd_raw(const COMMAND_RPC_GET_MASTER_NODE_REGISTRATION_CMD_RAW::request& req, COMMAND_RPC_GET_MASTER_NODE_REGISTRATION_CMD_RAW::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
     bool on_get_master_node_registration_cmd(const COMMAND_RPC_GET_MASTER_NODE_REGISTRATION_CMD::request& req, COMMAND_RPC_GET_MASTER_NODE_REGISTRATION_CMD::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
     bool on_get_master_node_blacklisted_key_images(const COMMAND_RPC_GET_MASTER_NODE_BLACKLISTED_KEY_IMAGES::request& req, COMMAND_RPC_GET_MASTER_NODE_BLACKLISTED_KEY_IMAGES::response& res, epee::json_rpc::error &error_resp, const connection_context *ctx = NULL);
     bool on_get_master_node_key(const COMMAND_RPC_GET_MASTER_NODE_KEY::request& req, COMMAND_RPC_GET_MASTER_NODE_KEY::response& res, epee::json_rpc::error &error_resp, const connection_context *ctx = NULL);
     bool on_get_master_nodes(const COMMAND_RPC_GET_MASTER_NODES::request& req, COMMAND_RPC_GET_MASTER_NODES::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
+    bool on_get_n_master_nodes(const COMMAND_RPC_GET_N_MASTER_NODES::request& req, COMMAND_RPC_GET_N_MASTER_NODES::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
     bool on_get_all_master_nodes_keys(const COMMAND_RPC_GET_ALL_MASTER_NODES_KEYS::request& req, COMMAND_RPC_GET_ALL_MASTER_NODES_KEYS::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx);
     bool on_get_all_master_nodes(const COMMAND_RPC_GET_MASTER_NODES::request& req, COMMAND_RPC_GET_MASTER_NODES::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
     bool on_get_staking_requirement(const COMMAND_RPC_GET_STAKING_REQUIREMENT::request& req, COMMAND_RPC_GET_STAKING_REQUIREMENT::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
+    /// Provide a proof that this node holds the blockchain
+    bool on_perform_blockchain_test(const COMMAND_RPC_PERFORM_BLOCKCHAIN_TEST::request& req, COMMAND_RPC_PERFORM_BLOCKCHAIN_TEST::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
+    bool on_storage_server_ping(const COMMAND_RPC_STORAGE_SERVER_PING::request& req, COMMAND_RPC_STORAGE_SERVER_PING::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
+    bool on_get_checkpoints(const COMMAND_RPC_GET_CHECKPOINTS::request& req, COMMAND_RPC_GET_CHECKPOINTS::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
+    bool on_get_master_nodes_state_changes(const COMMAND_RPC_GET_MN_STATE_CHANGES::request& req, COMMAND_RPC_GET_MN_STATE_CHANGES::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
     //-----------------------
+
+#if defined(BELDEX_ENABLE_INTEGRATION_TEST_HOOKS)
+    void on_relay_uptime_and_votes()
+    {
+      m_core.submit_uptime_proof();
+      m_core.relay_master_node_votes();
+      std::cout << "Votes and uptime relayed";
+      loki::write_redirected_stdout_to_shared_mem();
+    }
+
+    void on_debug_mine_n_blocks(std::string const &address, uint64_t num_blocks)
+    {
+      cryptonote::miner &miner = m_core.get_miner();
+      if (miner.is_mining())
+      {
+        std::cout << "Already mining";
+        return;
+      }
+
+      cryptonote::address_parse_info info;
+      if(!get_account_address_from_str(info, m_core.get_nettype(), address))
+      {
+        std::cout << "Failed, wrong address";
+        return;
+      }
+
+      for (uint64_t i = 0; i < num_blocks; i++)
+      {
+        if(!miner.debug_mine_singular_block(info.address))
+        {
+          std::cout << "Failed, mining not started";
+          return;
+        }
+      }
+
+      std::cout << "Mining stopped in daemon";
+    }
+#endif
 
 private:
     bool check_core_busy();
     bool check_core_ready();
+
+    template<typename response>
+    void fill_mn_response_entry(response &entry, const master_nodes::master_node_pubkey_info &mn_info, uint64_t current_height);
     
     //utils
     uint64_t get_block_reward(const block& blk);

@@ -22,11 +22,17 @@ Preparing the Gitian builder host
 
 The first step is to prepare the host environment that will be used to perform the Gitian builds.
 This guide explains how to set up the environment, and how to start the builds.
+Gitian offers to build with either `kvm`, `docker` or `lxc`. The default build
+path chosen is `lxc`, but its setup is more complicated. You need to be logged in as the `gitianuser`. 
+If this user does not exist yet on your system, create it. Gitian can use
+either kvm, lxc or docker as a host environment. This documentation will show
+how to build with lxc and docker. While the docker setup is easy, the lxc setup
+is more involved.
 
-Gitian builds are for now executed on Ubuntu 18.04 "Bionic Beaver". A solution is being worked on to run 
-it in docker in the future. Please run Ubuntu in either a VM, or on your physical machine.
-You need to be logged in as the `gitianuser` in order to build gitian builds. If this user does not exist yet on your system, 
-create it. 
+LXC
+---
+
+LXC builds should be run on Ubuntu 18.04 "Bionic Beaver".
 
 Note that a version of `lxc-execute` higher or equal to 2.1.1 is required.
 You can check the version with `lxc-execute --version`.
@@ -63,15 +69,28 @@ reboot
 
 This setup is required to enable networking in the container.
 
+Docker
+------
+
+Building in docker does not require much setup. Install docker on your host, then type the following:
+
+```bash
+sudo apt-get install git make curl
+sudo usermod -aG docker gitianuser
+```
+
 
 Manual and Building
 -------------------
-The instructions below use the automated script [gitian-build.py](https://github.com/betcoin/bitcoin/blob/master/contrib/gitian-build.py) which only works in Ubuntu. 
-It calls all available descriptors. Help for the build steps taken can be accessed with `./gitian-build.py --help`.
+
+The instructions below use the automated script [gitian-build.py](gitian-build.py) which only works in Ubuntu. 
+It calls all available .yml descriptors, which in turn pass the build configurations for different platforms to gitian.
+Help for the build steps taken can be accessed with `./gitian-build.py --help`.
 
 Initial Gitian Setup
 --------------------
-The `gitian-build.py` script will checkout different release tags, so it's best to copy it:
+
+The `gitian-build.py` script will checkout different release tags, so it's best to copy it to the top level directory:
 
 ```bash
 cp beldex/contrib/gitian/gitian-build.py .
@@ -79,11 +98,11 @@ cp beldex/contrib/gitian/gitian-build.py .
 
 Setup the required environment, you only need to do this once:
 
+```bash
+./gitian-build.py --setup loki-user x.x.x
 ```
 ./gitian-build.py --setup beldex-user x.x.x
 ```
-
-Where `beldex-user` is your Github name and `x.x.x` is the version tag you want to build.
 
 While gitian and this build script does provide a way for you to sign the build directly, it is recommended to sign in a seperate step. 
 This script is only there for convenience. Seperate steps for building can still be taken.
@@ -119,12 +138,20 @@ gpg --output $VERSION-win-unsigned/$NAME/beldex-win-$VERSION-build.assert.sig --
 Make a pull request (both the `.assert` and `.assert.sig` files) to the
 [Beldex-Coin/gitian.sigs](https://github.com/Beldex-Coin/gitian.sigs/) repository:
 
+```bash
+git checkout -b v3.0.4
+git commit -S -a -m "Add $NAME v3.0.4"
+git push --set-upstream $NAME v3.0.4
 ```
 git checkout -b 2.0.0
 git commit -S -a -m "Add $NAME 2.0.0"
 git push --set-upstream $NAME 2.0.0
 ```
 
+More Build Options
+------------------
+
+You can choose your own remote and commit hash by running for example:
 ```bash
     gpg --detach-sign ${VERSION}-linux/${SIGNER}/beldex-linux-*-build.assert
     gpg --detach-sign ${VERSION}-win-unsigned/${SIGNER}/beldex-win-*-build.assert

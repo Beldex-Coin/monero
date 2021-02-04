@@ -1,5 +1,5 @@
 // Copyright (c) 2018, The Beldex Project
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -70,6 +70,9 @@ using namespace epee;
 #include "net/http_client.h"                        // epee::net_utils::...
 
 #ifdef WIN32
+#ifndef STRSAFE_NO_DEPRECATE
+#define STRSAFE_NO_DEPRECATE
+#endif
   #include <windows.h>
   #include <shlobj.h>
   #include <strsafe.h>
@@ -81,6 +84,7 @@ using namespace epee;
 #include <boost/filesystem.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/asio.hpp>
+#include <boost/format.hpp>
 #include <openssl/sha.h>
 #include "i18n.h"
 
@@ -642,16 +646,16 @@ std::string get_nix_version_display_string()
     return res;
   }
 
-  std::error_code replace_file(const std::string& replacement_name, const std::string& replaced_name)
+  std::error_code replace_file(const std::string& old_name, const std::string& new_name)
   {
     int code;
 #if defined(WIN32)
     // Maximizing chances for success
     std::wstring wide_replacement_name;
-    try { wide_replacement_name = string_tools::utf8_to_utf16(replacement_name); }
+    try { wide_replacement_name = string_tools::utf8_to_utf16(old_name); }
     catch (...) { return std::error_code(GetLastError(), std::system_category()); }
     std::wstring wide_replaced_name;
-    try { wide_replaced_name = string_tools::utf8_to_utf16(replaced_name); }
+    try { wide_replaced_name = string_tools::utf8_to_utf16(new_name); }
     catch (...) { return std::error_code(GetLastError(), std::system_category()); }
 
     DWORD attributes = ::GetFileAttributesW(wide_replaced_name.c_str());
@@ -663,7 +667,7 @@ std::string get_nix_version_display_string()
     bool ok = 0 != ::MoveFileExW(wide_replacement_name.c_str(), wide_replaced_name.c_str(), MOVEFILE_REPLACE_EXISTING);
     code = ok ? 0 : static_cast<int>(::GetLastError());
 #else
-    bool ok = 0 == std::rename(replacement_name.c_str(), replaced_name.c_str());
+    bool ok = 0 == std::rename(old_name.c_str(), new_name.c_str());
     code = ok ? 0 : errno;
 #endif
     return std::error_code(code, std::system_category());
