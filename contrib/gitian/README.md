@@ -99,7 +99,7 @@ cp beldex/contrib/gitian/gitian-build.py .
 Setup the required environment, you only need to do this once:
 
 ```bash
-./gitian-build.py --setup loki-user x.x.x
+./gitian-build.py --setup beldex-user x.x.x
 ```
 ./gitian-build.py --setup beldex-user x.x.x
 ```

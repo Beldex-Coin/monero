@@ -260,7 +260,7 @@ namespace cryptonote
     bool on_prune_blockchain(const COMMAND_RPC_PRUNE_BLOCKCHAIN::request& req, COMMAND_RPC_PRUNE_BLOCKCHAIN::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
 
     //
-    // Loki
+    // Beldex
     //
     bool on_get_quorum_state(const COMMAND_RPC_GET_QUORUM_STATE::request& req, COMMAND_RPC_GET_QUORUM_STATE::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
     bool on_get_master_node_registration_cmd_raw(const COMMAND_RPC_GET_MASTER_NODE_REGISTRATION_CMD_RAW::request& req, COMMAND_RPC_GET_MASTER_NODE_REGISTRATION_CMD_RAW::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx = NULL);
@@ -285,7 +285,7 @@ namespace cryptonote
       m_core.submit_uptime_proof();
       m_core.relay_master_node_votes();
       std::cout << "Votes and uptime relayed";
-      loki::write_redirected_stdout_to_shared_mem();
+      beldex::write_redirected_stdout_to_shared_mem();
     }
 
     void on_debug_mine_n_blocks(std::string const &address, uint64_t num_blocks)

@@ -181,6 +181,6 @@ tags:
 # Debug Target for Developers: Only build daemon and wallet
 developer_daemon_and_wallet: tags
 	mkdir -p $(builddir)/debug
-	cd $(builddir)/debug && cmake -D CMAKE_BUILD_TYPE=Debug -D BUILD_TESTS=OFF -D LOKI_DAEMON_AND_WALLET_ONLY=ON $(topdir) && $(MAKE)
+	cd $(builddir)/debug && cmake -D CMAKE_BUILD_TYPE=Debug -D BUILD_TESTS=OFF -D BELDEX_DAEMON_AND_WALLET_ONLY=ON $(topdir) && $(MAKE)
 
 .PHONY: all cmake-debug debug debug-test debug-all cmake-release release release-test release-all clean tags developer_daemon_and_wallet

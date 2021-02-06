@@ -215,7 +215,7 @@ private:
 
 	inline bool check_override()
 	{
-		const char *env = getenv("LOKI_USE_SOFTWARE_AES");
+		const char *env = getenv("BELDEX_USE_SOFTWARE_AES");
 		if (!env) {
 			return false;
 		}

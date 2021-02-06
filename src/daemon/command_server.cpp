@@ -364,7 +364,7 @@ t_command_server::t_command_server(
     , "print_sn_state_changes <start_height> [end height]"
     , "Query the state changes between the range, omit the last argument to scan until the current block"
     );
-#if defined(LOKI_ENABLE_INTEGRATION_TEST_HOOKS)
+#if defined(BELDEX_ENABLE_INTEGRATION_TEST_HOOKS)
     m_command_lookup.set_handler(
       "relay_votes_and_uptime", std::bind([rpc_server](std::vector<std::string> const &args) {
         rpc_server->on_relay_uptime_and_votes();
@@ -381,19 +381,19 @@ t_command_server::t_command_server(
           valid_cmd = true;
           if (args[0] == "toggle_checkpoint_quorum")
           {
-            loki::integration_test.disable_checkpoint_quorum = !loki::integration_test.disable_checkpoint_quorum;
+            beldex::integration_test.disable_checkpoint_quorum = !beldex::integration_test.disable_checkpoint_quorum;
           }
           else if (args[0] == "toggle_obligation_quorum")
           {
-            loki::integration_test.disable_obligation_quorum = !loki::integration_test.disable_obligation_quorum;
+            beldex::integration_test.disable_obligation_quorum = !beldex::integration_test.disable_obligation_quorum;
           }
           else if (args[0] == "toggle_obligation_uptime_proof")
           {
-            loki::integration_test.disable_obligation_uptime_proof = !loki::integration_test.disable_obligation_uptime_proof;
+            beldex::integration_test.disable_obligation_uptime_proof = !beldex::integration_test.disable_obligation_uptime_proof;
           }
           else if (args[0] == "toggle_obligation_checkpointing")
           {
-            loki::integration_test.disable_obligation_checkpointing = !loki::integration_test.disable_obligation_checkpointing;
+            beldex::integration_test.disable_obligation_checkpointing = !beldex::integration_test.disable_obligation_checkpointing;
           }
           else
           {
@@ -415,7 +415,7 @@ t_command_server::t_command_server(
         if (!valid_cmd)
           std::cout << "integration_test invalid command";
 
-        loki::write_redirected_stdout_to_shared_mem();
+        beldex::write_redirected_stdout_to_shared_mem();
         return true;
       }, p::_1)
     , ""

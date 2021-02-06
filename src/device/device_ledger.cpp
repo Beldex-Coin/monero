@@ -1356,7 +1356,7 @@ namespace hw {
           additional_txkey.sec = additional_tx_keys[output_index];
       }
 
-      bool &is_change = found_change; // NOTE(loki): Alias our param into theirs so we don't have to change much code.
+      bool &is_change = found_change; // NOTE(beldex): Alias our param into theirs so we don't have to change much code.
 
       if (change_addr && dst_entr == *change_addr && !is_change)
         is_change = true; // sending change to yourself; derivation = a*R

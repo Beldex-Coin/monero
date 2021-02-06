@@ -149,7 +149,7 @@ sees a transaction over Tor, it could _assume_ (possibly incorrectly) that the
 transaction originated from the peer. If both the Tor connection and an
 IPv4/IPv6 connection have timestamps that are approximately close in value they
 could be used to link the two connections. This is less likely to happen if the
-system clock is fairly accurate - many peers on the Loki network should have
+system clock is fairly accurate - many peers on the Beldex network should have
 similar timestamps.
 
 #### Mitigation
@@ -166,20 +166,20 @@ An ISP can passively monitor `beldexd` connections from a node and observe when
 a transaction is sent over a Tor/I2P connection via timing analysis + size of
 data sent during that timeframe. I2P should provide better protection against
 this attack - its connections are not circuit based. However, if a node is
-only using I2P for broadcasting Loki transactions, the total aggregate of
+only using I2P for broadcasting Beldex transactions, the total aggregate of
 I2P data would also leak information.
 
 #### Mitigation
 
 There is no current mitigation for the user right now. This attack is fairly
-sophisticated, and likely requires support from the internet host of a Loki
+sophisticated, and likely requires support from the internet host of a Beldex
 user.
 
 In the near future, "whitening" the amount of data sent over anonymity network
 connections will be performed. An attempt will be made to make a transaction
 broadcast indistinguishable from a peer timed sync command.
 
-### Intermittent Loki Syncing
+### Intermittent Beldex Syncing
 
 If a user only runs `beldexd` to send a transaction then quit, this can also
 be used by an ISP to link a user to a transaction.

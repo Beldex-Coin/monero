@@ -752,7 +752,7 @@ bool t_rpc_command_executor::mining_status() {
     uint64_t daily = 86400ull / mres.block_target * mres.block_reward * ratio;
     uint64_t monthly = 86400ull / mres.block_target * 30.5 * mres.block_reward * ratio;
     uint64_t yearly = 86400ull / mres.block_target * 356 * mres.block_reward * ratio;
-    tools::msg_writer() << "Expected: " << cryptonote::print_money(daily) << " LOKI daily, "
+    tools::msg_writer() << "Expected: " << cryptonote::print_money(daily) << " BELDEX daily, "
         << cryptonote::print_money(monthly) << " monthly, " << cryptonote::print_money(yearly) << " yearly";
   }
 
@@ -1864,7 +1864,7 @@ bool t_rpc_command_executor::ban(const std::string &address, time_t seconds)
     // TODO(doyle): Work around because integration tests break when using
     // mlog_set_categories(""), so emit the block message using msg writer
     // instead of the logging system.
-#if defined(LOKI_ENABLE_INTEGRATION_TEST_HOOKS)
+#if defined(BELDEX_ENABLE_INTEGRATION_TEST_HOOKS)
     tools::success_msg_writer() << "Host " << ip << " blocked.";
 #endif
 

@@ -942,7 +942,7 @@ namespace cryptonote
     const uint8_t major_version = m_core.get_blockchain_storage().get_current_hard_fork_version();
 
     res.pow_algorithm =
-        major_version >= network_version_13_checkpointing    ? "RandomX (LOKI variant)"               :
+        major_version >= network_version_13_checkpointing    ? "RandomX (Beldex variant)"               :
         major_version == network_version_11_infinite_staking ? "Cryptonight Turtle Light (Variant 2)" :
                                                                "Cryptonight Heavy (Variant 2)";
 
@@ -2542,19 +2542,19 @@ namespace cryptonote
       uint8_t hf_version = m_core.get_hard_fork_version(height);
       if (hf_version != HardFork::INVALID_HF_VERSION_FOR_HEIGHT)
       {
-        auto start_quorum_iterator = static_cast<service_nodes::quorum_type>(0);
-        auto end_quorum_iterator   = service_nodes::max_quorum_type_for_hf(hf_version);
+        auto start_quorum_iterator = static_cast<master_nodes::quorum_type>(0);
+        auto end_quorum_iterator   = master_nodes::max_quorum_type_for_hf(hf_version);
 
-        if (req.quorum_type != (decltype(req.quorum_type))service_nodes::quorum_type::rpc_request_all_quorums_sentinel_value)
+        if (req.quorum_type != (decltype(req.quorum_type))master_nodes::quorum_type::rpc_request_all_quorums_sentinel_value)
         {
-          start_quorum_iterator = static_cast<service_nodes::quorum_type>(req.quorum_type);
+          start_quorum_iterator = static_cast<master_nodes::quorum_type>(req.quorum_type);
           end_quorum_iterator   = start_quorum_iterator;
         }
 
         for (int quorum_int = (int)start_quorum_iterator; quorum_int <= (int)end_quorum_iterator; quorum_int++)
         {
-          auto type = static_cast<service_nodes::quorum_type>(quorum_int);
-          if (std::shared_ptr<const service_nodes::testing_quorum> quorum = m_core.get_testing_quorum(type, height, true /*include_old*/))
+          auto type = static_cast<master_nodes::quorum_type>(quorum_int);
+          if (std::shared_ptr<const master_nodes::testing_quorum> quorum = m_core.get_testing_quorum(type, height, true /*include_old*/))
           {
             COMMAND_RPC_GET_QUORUM_STATE::quorum_for_height entry = {};
             entry.height                                          = height;
@@ -2741,8 +2741,8 @@ namespace cryptonote
 
     entry.contributors.reserve(info.contributors.size());
 
-    using namespace service_nodes;
-    for (service_node_info::contributor_t const &contributor : info.contributors)
+    using namespace master_nodes;
+    for (master_node_info::contributor_t const &contributor : info.contributors)
     {
       entry.contributors.push_back({});
       auto &new_contributor = entry.contributors.back();
@@ -2751,7 +2751,7 @@ namespace cryptonote
       new_contributor.address  = cryptonote::get_account_address_as_str(m_core.get_nettype(), false/*is_subaddress*/, contributor.address);
 
       new_contributor.locked_contributions.reserve(contributor.locked_contributions.size());
-      for (service_node_info::contribution_t const &src : contributor.locked_contributions)
+      for (master_node_info::contribution_t const &src : contributor.locked_contributions)
       {
         new_contributor.locked_contributions.push_back({});
         auto &dest = new_contributor.locked_contributions.back();
@@ -2769,7 +2769,7 @@ namespace cryptonote
     entry.swarm_id                      = info.swarm_id;
   }
   //------------------------------------------------------------------------------------------------------------------------------
-  bool core_rpc_server::on_get_service_nodes(const COMMAND_RPC_GET_SERVICE_NODES::request& req, COMMAND_RPC_GET_SERVICE_NODES::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx)
+  bool core_rpc_server::on_get_master_nodes(const COMMAND_RPC_GET_MASTER_NODES::request& req, COMMAND_RPC_GET_MASTER_NODES::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx)
   {
     PERF_TIMER(on_get_master_nodes);
 
@@ -2843,16 +2843,16 @@ namespace cryptonote
       sn_infos.resize(limit);
     }
 
-    res.service_node_states.reserve(sn_infos.size());
+    res.master_node_states.reserve(sn_infos.size());
 
     const uint64_t height = m_core.get_current_blockchain_height();
 
     for (auto &pubkey_info : sn_infos) {
-      COMMAND_RPC_GET_N_SERVICE_NODES::response::entry entry = {res.fields};
+      COMMAND_RPC_GET_N_MASTER_NODES::response::entry entry = {res.fields};
 
       fill_sn_response_entry(entry, pubkey_info, height);
 
-      res.service_node_states.push_back(entry);
+      res.master_node_states.push_back(entry);
     }
 
     res.status = CORE_RPC_STATUS_OK;
@@ -2865,11 +2865,11 @@ namespace cryptonote
     return true;
   }
   //------------------------------------------------------------------------------------------------------------------------------
-  bool core_rpc_server::on_get_all_service_nodes(const COMMAND_RPC_GET_SERVICE_NODES::request& req, COMMAND_RPC_GET_SERVICE_NODES::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx)
+  bool core_rpc_server::on_get_all_master_nodes(const COMMAND_RPC_GET_MASTER_NODES::request& req, COMMAND_RPC_GET_MASTER_NODES::response& res, epee::json_rpc::error& error_resp, const connection_context *ctx)
   {
     auto req_all = req;
-    req_all.service_node_pubkeys.clear();
-    return on_get_service_nodes(req_all, res, error_resp);
+    req_all.master_node_pubkeys.clear();
+    return on_get_master_nodes(req_all, res, error_resp);
   }
   //------------------------------------------------------------------------------------------------------------------------------
   /// Start with seed and perform a series of computation arriving at the answer
@@ -2904,17 +2904,17 @@ namespace cryptonote
         return 0;
       }
       const blob_t &blob = blocks.at(0).first;
-      const uint64_t byte_idx = service_nodes::uniform_distribution_portable(mt, blob.size());
+      const uint64_t byte_idx = master_nodes::uniform_distribution_portable(mt, blob.size());
       uint8_t byte = blob[byte_idx];
 
       /// pick a random byte from a random transaction blob if found
       if (!txs.empty()) {
-        const uint64_t tx_idx = service_nodes::uniform_distribution_portable(mt, txs.size());
+        const uint64_t tx_idx = master_nodes::uniform_distribution_portable(mt, txs.size());
         const blob_t &tx_blob = txs[tx_idx];
 
         /// not sure if this can be empty, so check to be safe
         if (!tx_blob.empty()) {
-          const uint64_t byte_idx = service_nodes::uniform_distribution_portable(mt, tx_blob.size());
+          const uint64_t byte_idx = master_nodes::uniform_distribution_portable(mt, tx_blob.size());
           const uint8_t tx_byte = tx_blob[byte_idx];
           byte ^= tx_byte;
         }
@@ -3094,24 +3094,24 @@ namespace cryptonote
           }
 
           switch(state_change.state) {
-            case service_nodes::new_state::deregister:
+            case master_nodes::new_state::deregister:
               res.total_deregister++;
               break;
 
-            case service_nodes::new_state::decommission:
+            case master_nodes::new_state::decommission:
               res.total_decommission++;
               break;
 
-            case service_nodes::new_state::recommission:
+            case master_nodes::new_state::recommission:
               res.total_recommission++;
               break;
 
-            case service_nodes::new_state::ip_change_penalty:
+            case master_nodes::new_state::ip_change_penalty:
               res.total_ip_change_penalty++;
               break;
 
             default:
-              MERROR("Unhandled state in on_get_service_nodes_state_changes");
+              MERROR("Unhandled state in on_get_master_nodes_state_changes");
               break;
           }
         }

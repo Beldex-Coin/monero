@@ -468,7 +468,7 @@ std::vector<checkpoint_t> BlockchainDB::get_checkpoints_range(uint64_t start, ui
 
 bool BlockchainDB::get_immutable_checkpoint(checkpoint_t *immutable_checkpoint, uint64_t block_height) const
 {
-  size_t constexpr NUM_CHECKPOINTS = service_nodes::CHECKPOINT_NUM_CHECKPOINTS_FOR_CHAIN_FINALITY;
+  size_t constexpr NUM_CHECKPOINTS = master_nodes::CHECKPOINT_NUM_CHECKPOINTS_FOR_CHAIN_FINALITY;
   static_assert(NUM_CHECKPOINTS == 2,
                 "Expect checkpoint finality to be 2, otherwise the immutable logic needs to check for any hardcoded "
                 "checkpoints inbetween");
@@ -479,7 +479,7 @@ bool BlockchainDB::get_immutable_checkpoint(checkpoint_t *immutable_checkpoint, 
     return false;
 
   checkpoint_t *checkpoint_ptr = nullptr;
-  if (checkpoints[0].type != checkpoint_type::service_node) // checkpoint[0] is the first closest checkpoint that is <= my height
+  if (checkpoints[0].type != checkpoint_type::master_node) // checkpoint[0] is the first closest checkpoint that is <= my height
   {
     checkpoint_ptr = &checkpoints[0]; // Must be hard-coded then, always immutable
   }

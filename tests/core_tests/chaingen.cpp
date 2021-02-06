@@ -284,7 +284,7 @@ cryptonote::transaction linear_chain_generator::create_deregister_tx(const crypt
   if (!idx) { MERROR("master node could not be found in the master node list"); throw std::exception(); }
 
   cryptonote::tx_extra_master_node_state_change deregister(master_nodes::new_state::deregister, height, *idx);
-  /// need to create DEREGISTER_MIN_VOTES_TO_KICK_SERVICE_NODE (7) votes
+  /// need to create DEREGISTER_MIN_VOTES_TO_KICK_MASTER_NODE (7) votes
   for (const auto voter : voters) {
 
     const auto reg = mn_list_.find_registration(voter.mn_pk);
@@ -294,7 +294,7 @@ cryptonote::transaction linear_chain_generator::create_deregister_tx(const crypt
     const auto pk = reg->keys.pub;
     const auto sk = reg->keys.sec;
 
-    service_nodes::quorum_vote_t deregister_vote = service_nodes::make_state_change_vote(deregister.block_height, voter.idx_in_quorum, deregister.master_node_index, master_nodes::new_state::deregister, pk, sk);
+    master_nodes::quorum_vote_t deregister_vote = master_nodes::make_state_change_vote(deregister.block_height, voter.idx_in_quorum, deregister.master_node_index, master_nodes::new_state::deregister, pk, sk);
     deregister.votes.push_back({ deregister_vote.signature, (uint32_t)voter.idx_in_quorum });
   }
 

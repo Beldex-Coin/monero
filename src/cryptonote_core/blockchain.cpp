@@ -1065,8 +1065,8 @@ bool Blockchain::switch_to_alternative_blockchain(std::list<block_extended_info>
 
   auto split_height = m_db->height();
 
-  // TODO(loki): This is a work around for sometimes reorganising the blockchain causing inconsistent difficulty values
-  LOKI_DEFER
+  // TODO(beldex): This is a work around for sometimes reorganising the blockchain causing inconsistent difficulty values
+  BELDEX_DEFER
   {
     if (nettype() == MAINNET)
     {
@@ -1615,7 +1615,7 @@ bool Blockchain::create_block_template(block& b, const crypto::hash *from_block,
    */
   //make blocks coin-base tx looks close to real coinbase tx to get truthful blob weight
   uint8_t hf_version = b.major_version;
-  loki_miner_tx_context miner_tx_context(m_nettype,
+  beldex_miner_tx_context miner_tx_context(m_nettype,
                                          m_master_node_list.select_winner(),
                                          m_master_node_list.get_winner_addresses_and_portions());
 

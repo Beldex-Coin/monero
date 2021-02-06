@@ -282,7 +282,7 @@ DNSResolver::DNSResolver() : m_data(new DNSResolverData())
 
   if (!DNS_PUBLIC)
   {
-    // TODO(loki): Don't probe moneropulse for Loki
+    // TODO(beldex): Don't probe moneropulse for Beldex
 #if 0
     // if no DNS_PUBLIC specified, we try a lookup to what we know
     // should be a valid DNSSEC record, and switch to known good

@@ -1529,7 +1529,7 @@ namespace cryptonote
     std::vector<block_complete_entry> blocks;
     m_miner.pause();
     {
-      LOKI_DEFER { m_miner.resume(); };
+      BELDEX_DEFER { m_miner.resume(); };
       try
       {
         blocks.push_back(get_block_complete_entry(b, m_mempool));
@@ -1599,7 +1599,7 @@ namespace cryptonote
     bool result = m_blockchain_storage.add_new_block(b, bvc, checkpoint);
     if (result)
     {
-      // TODO(loki): PERF(beldex): This causes perf problems in integration mode, so in real-time operation it may not be
+      // TODO(beldex): PERF(beldex): This causes perf problems in integration mode, so in real-time operation it may not be
       // noticeable but could bubble up and cause slowness if the runtime variables align up undesiredly.
       relay_master_node_votes(); // NOTE: nop if synchronising due to not accepting votes whilst syncing
     }
@@ -1660,7 +1660,7 @@ namespace cryptonote
       b = &lb;
     }
 
-    // TODO(loki): This check should be redundant and included in
+    // TODO(beldex): This check should be redundant and included in
     // verify_checkpoints once we enable it. It is not enabled until alternate
     // quorums are implemented and merged
     if (checkpoint)

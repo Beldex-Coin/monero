@@ -1421,7 +1421,7 @@ void BlockchainLMDB::open(const std::string& filename, const int db_flags)
 
   lmdb_db_open(txn, LMDB_HF_VERSIONS, MDB_INTEGERKEY | MDB_CREATE, m_hf_versions, "Failed to open db handle for m_hf_versions");
 
-  lmdb_db_open(txn, LMDB_SERVICE_NODE_DATA, MDB_INTEGERKEY | MDB_CREATE, m_service_node_data, "Failed to open db handle for m_service_node_data");
+  lmdb_db_open(txn, LMDB_MASTER_NODE_DATA, MDB_INTEGERKEY | MDB_CREATE, m_master_node_data, "Failed to open db handle for m_master_node_data");
 
   lmdb_db_open(txn, LMDB_PROPERTIES, MDB_CREATE, m_properties, "Failed to open db handle for m_properties");
 
@@ -3802,7 +3802,7 @@ void BlockchainLMDB::update_block_checkpoint(checkpoint_t const &checkpoint)
   boost::endian::native_to_little_inplace(header.height);
   boost::endian::native_to_little_inplace(header.num_signatures);
 
-  size_t const MAX_BYTES_REQUIRED   = sizeof(header) + (sizeof(*checkpoint.signatures.data()) * service_nodes::CHECKPOINT_QUORUM_SIZE);
+  size_t const MAX_BYTES_REQUIRED   = sizeof(header) + (sizeof(*checkpoint.signatures.data()) * master_nodes::CHECKPOINT_QUORUM_SIZE);
   uint8_t buffer[MAX_BYTES_REQUIRED];
 
   size_t const bytes_for_signatures = sizeof(*checkpoint.signatures.data()) * header.num_signatures;
@@ -3881,19 +3881,19 @@ bool BlockchainLMDB::get_block_checkpoint_internal(uint64_t height, checkpoint_t
   if (ret == MDB_SUCCESS)
   {
     auto const *header     = static_cast<blk_checkpoint_header const *>(value.mv_data);
-    auto const *signatures = reinterpret_cast<service_nodes::voter_to_signature *>(static_cast<uint8_t *>(value.mv_data) + sizeof(*header));
+    auto const *signatures = reinterpret_cast<master_nodes::voter_to_signature *>(static_cast<uint8_t *>(value.mv_data) + sizeof(*header));
 
     boost::endian::little_to_native_inplace(header->height);
     boost::endian::little_to_native_inplace(header->num_signatures);
 
     checkpoint            = {};
     checkpoint.height     = header->height;
-    checkpoint.type       = (header->num_signatures > 0 ) ? checkpoint_type::service_node : checkpoint_type::hardcoded;
+    checkpoint.type       = (header->num_signatures > 0 ) ? checkpoint_type::master_node : checkpoint_type::hardcoded;
     checkpoint.block_hash = header->block_hash;
     checkpoint.signatures.reserve(header->num_signatures);
     for (size_t i = 0; i < header->num_signatures; ++i)
     {
-      service_nodes::voter_to_signature const *signature = signatures + i;
+      master_nodes::voter_to_signature const *signature = signatures + i;
       checkpoint.signatures.push_back(*signature);
     }
   }
@@ -4518,7 +4518,7 @@ void BlockchainLMDB::fixup(fixup_context const context)
           v12_initial_blocks_remaining--;
         }
         difficulty_type diff = next_difficulty_v2(timestamps, difficulties, DIFFICULTY_TARGET_V2,
-            version <= cryptonote::network_version_9_service_nodes, v12_initial_override);
+            version <= cryptonote::network_version_9_master_nodes, v12_initial_override);
 
         MDB_val_set(key, curr_height);
         if (int result = mdb_cursor_get(m_cur_block_info, (MDB_val *)&zerokval, &key, MDB_GET_BOTH))
