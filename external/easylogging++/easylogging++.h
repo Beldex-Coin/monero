@@ -1,17 +1,16 @@
 //
 //  Bismillah ar-Rahmaan ar-Raheem
 //
-//  Easylogging++ v9.96.5
+//  Easylogging++ v9.96.7
 //  Single-header only, cross-platform logging library for C++ applications
 //
-//  Copyright (c) 2012-2018 Muflihun Labs
+//  Copyright (c) 2012-2018 Zuhd Web Services
 //  Copyright (c) 2012-2018 @abumusamq
 //
 //  This library is released under the MIT Licence.
-//  https://github.com/muflihun/easyloggingpp/blob/master/LICENSE
+//  https://github.com/zuhd-org/easyloggingpp/blob/master/LICENSE
 //
-//  https://github.com/muflihun/easyloggingpp
-//  https://muflihun.github.io/easyloggingpp
+//  https://zuhd.org
 //  http://muflihun.com
 //
 
@@ -126,13 +125,18 @@
 #else
 #  define ELPP_OS_NETBSD 0
 #endif
+#if defined(__EMSCRIPTEN__)
+#  define ELPP_OS_EMSCRIPTEN 1
+#else
+#  define ELPP_OS_EMSCRIPTEN 0
+#endif
 #if (defined(__DragonFly__))
 #   define ELPP_OS_DRAGONFLY 1
 #else
 #   define ELPP_OS_DRAGONFLY 0
 #endif
 // Unix
-#if ((ELPP_OS_LINUX || ELPP_OS_MAC || ELPP_OS_FREEBSD || ELPP_OS_NETBSD || ELPP_OS_SOLARIS || ELPP_OS_AIX || ELPP_OS_DRAGONFLY || ELPP_OS_OPENBSD) && (!ELPP_OS_WINDOWS))
+#if ((ELPP_OS_LINUX || ELPP_OS_MAC || ELPP_OS_FREEBSD || ELPP_OS_NETBSD || ELPP_OS_SOLARIS || ELPP_OS_AIX || ELPP_OS_EMSCRIPTEN || ELPP_OS_DRAGONFLY || ELPP_OS_OPENBSD) && (!ELPP_OS_WINDOWS))
 #  define ELPP_OS_UNIX 1
 #else
 #  define ELPP_OS_UNIX 0
@@ -217,7 +221,7 @@ ELPP_INTERNAL_DEBUGGING_OUT_INFO << ELPP_INTERNAL_DEBUGGING_MSG(internalInfoStre
 #  define ELPP_INTERNAL_INFO(lvl, msg)
 #endif  // (defined(ELPP_DEBUG_INFO))
 #if (defined(ELPP_FEATURE_ALL)) || (defined(ELPP_FEATURE_CRASH_LOG))
-#  if (ELPP_COMPILER_GCC && !ELPP_MINGW && !ELPP_OS_OPENBSD && !ELPP_OS_NETBSD && !ELPP_OS_ANDROID)
+#  if (ELPP_COMPILER_GCC && !ELPP_MINGW && !ELPP_OS_OPENBSD && !ELPP_OS_NETBSD && !ELPP_OS_ANDROID && !ELPP_OS_EMSCRIPTEN)
 #    define ELPP_STACKTRACE 1
 #  else
 #    define ELPP_STACKTRACE 0
@@ -360,6 +364,7 @@ ELPP_INTERNAL_DEBUGGING_OUT_INFO << ELPP_INTERNAL_DEBUGGING_MSG(internalInfoStre
 #if defined(ELPP_SYSLOG)
 #   include <syslog.h>
 #endif  // defined(ELPP_SYSLOG)
+#include <climits>
 #include <ctime>
 #include <cstring>
 #include <cstdlib>
@@ -407,6 +412,7 @@ ELPP_INTERNAL_DEBUGGING_OUT_INFO << ELPP_INTERNAL_DEBUGGING_MSG(internalInfoStre
 #include <sstream>
 #include <memory>
 #include <type_traits>
+#include <atomic>
 #if ELPP_THREADING_ENABLED
 #  if ELPP_USE_STD_THREADING
 #      include <mutex>
@@ -758,10 +764,12 @@ static const char* kDefaultLoggerId                        =      ELPP_DEFAULT_L
 static const char* kDefaultLoggerId                        =      "default";
 #endif
 
+#if defined(ELPP_FEATURE_ALL) || defined(ELPP_FEATURE_PERFORMANCE_TRACKING)
 #ifdef ELPP_DEFAULT_PERFORMANCE_LOGGER
 static const char* kPerformanceLoggerId                    =      ELPP_DEFAULT_PERFORMANCE_LOGGER;
 #else
 static const char* kPerformanceLoggerId                    =      "performance";
+#endif // ELPP_DEFAULT_PERFORMANCE_LOGGER
 #endif
 
 #if defined(ELPP_SYSLOG)
@@ -2450,6 +2458,7 @@ class VRegistry : base::NoCopy, public base::threading::ThreadSafe {
     base::threading::ScopedLock scopedLock(lock());
     m_categories.clear();
     m_cached_allowed_categories.clear();
+    m_lowest_priority = INT_MAX;
   }
 
   inline void clearModules(void) {
@@ -2494,6 +2503,7 @@ class VRegistry : base::NoCopy, public base::threading::ThreadSafe {
   std::map<std::string, int> m_cached_allowed_categories;
   std::string m_categoriesString;
   std::string m_filenameCommonPrefix;
+  std::atomic<int> m_lowest_priority;
 };
 }  // namespace base
 class LogMessage {
@@ -2776,7 +2786,7 @@ class DefaultLogDispatchCallback : public LogDispatchCallback {
   void handle(const LogDispatchData* data);
  private:
   const LogDispatchData* m_data;
-  void dispatch(base::type::string_t&& logLine);
+  void dispatch(base::type::string_t&& rawLine, base::type::string_t&& logLine);
 };
 #if ELPP_ASYNC_LOGGING
 class AsyncLogDispatchCallback : public LogDispatchCallback {
@@ -3836,7 +3846,7 @@ class Helpers : base::StaticClass {
     return ELPP->hasCustomFormatSpecifier(formatSpecifier);
   }
   static inline void validateFileRolling(Logger* logger, Level level) {
-    if (logger == nullptr) return;
+    if (ELPP == nullptr || logger == nullptr) return;
     logger->m_typedConfigurations->validateFileRolling(level, ELPP->preRollOutCallback());
   }
 };
