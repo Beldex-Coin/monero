@@ -17,12 +17,13 @@
 #include <boost/archive/archive_exception.hpp>
 
 #include <climits>
+#include <utility>
 #if CHAR_BIT != 8
 #error This code assumes an eight-bit byte.
 #endif
 
 #include <boost/archive/basic_archive.hpp>
-#include <boost/detail/endian.hpp>
+#include <boost/predef/other/endian.h>
 
 #include <boost/archive/impl/archive_serializer_map.ipp>
 
@@ -44,9 +45,7 @@ reverse_bytes(signed char size, char *address){
     char * first = address;
     char * last = first + size - 1;
     for(;first < last;++first, --last){
-        char x = *last;
-        *last = *first;
-        *first = x;
+        std::swap(*first, *last);
     }
 }
 
