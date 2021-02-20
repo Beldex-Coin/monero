@@ -1,4 +1,5 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2018-2020, The Beldex Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -30,99 +31,133 @@
 
 #pragma once
 
-#include <limits>
 #include <type_traits>
-#include <utility>
-#include <sstream>
+#include <iterator>
 #include <string>
+#include <cassert>
+
 /*! \file varint.h
  * \brief provides the implementation of varint's
- * 
- * The representation of varints is rather odd. The first bit of each
- * octet is significant, it represents wheter there is another part
- * waiting to be read. For example 0x8002 would return 0x200, even
- * though 0x02 does not have its msb set. The actual way they are read
- * is as follows: Strip the msb of each byte, then from left to right,
- * read in what remains, placing it in reverse, into the buffer. Thus,
- * the following bit stream: 0xff02 would return 0x027f. 0xff turns
- * into 0x7f, is placed on the beginning of the buffer, then 0x02 is
- * unchanged, since its msb is not set, and placed at the end of the
- * buffer.
+ *
+ * Variable length integers ("varints") are serialized in little-endian order using 7 bits per byte
+ * where the most significant bit of each byte is a continuation bit (1 = more bytes coming, 0 =
+ * varint done) and the lower 7 bits are the next 7 significant bits.  The varint sequence ends when
+ * there are no more significant bits to encode.
+ *
+ * Examples (with bit position drawings):
+ *
+ *     value       binary [' @ 7-bits]      encoded bytes    encoded binary
+ *     =====       ===================      =============    ==============
+ *     0x64                  0'1100100      \x64             0110'0100
+ *                             └┴┴┼┴┴┘                   done┛└┴┴┬┴┴┴┘
+ *                                ╰──────────────────────────────╯
+ *
+ *     0x80            0000001'0000000      \x80\x01         1000'0000  0000'0001
+ *                     └┴┴┼┴┴┘ └┴┴┼┴┴┘               continue┛└┴┴┬┴┴┴┘  ┃└┴┴┬┴┴┴┘
+ *                        │       ╰──────────────────────────────╯    done  │
+ *                        ╰─────────────────────────────────────────────────╯
+ *
+ *     0xcc            0000001'1001100      \xcc\x01         1100'1100  0000'0001
+ *                     └┴┴┼┴┴┘ └┴┴┼┴┴┘               continue┛└┴┴┬┴┴┴┘  ┃└┴┴┬┴┴┴┘
+ *                        │       ╰──────────────────────────────╯    done  │
+ *                        ╰─────────────────────────────────────────────────╯
+ *
+ *     0xbf04  0000010'1111110'0000100      \x84\xfe\x02     1000'0100  1111'1110  0000'0010)
+ *             └┴┴┼┴┴┘ └┴┴┼┴┴┘ └┴┴┼┴┴┘               continue┛└┴┴┬┴┴┴┘  ┃└┴┴┬┴┴┴┘  ┃└┴┴┬┴┴┴┘
+ *                │       │       ╰──────────────────────────────╯ continue │    done  │
+ *                │       ╰─────────────────────────────────────────────────╯          │
+ *                ╰────────────────────────────────────────────────────────────────────╯
  */
 
 namespace tools {
 
-  /*! \brief Error codes for varint
-   */
-  enum {
-    /* \brief Represents the overflow error */
-    EVARINT_OVERFLOW = -1,
-    /* \brief Represents a non conical represnetation */
-    EVARINT_REPRESENT = -2,
-  };
+  /// Returned by read_varint in case of overflow
+  constexpr int EVARINT_OVERFLOW = -1;
+  /// Returned by read_varint in case of malformed varint representation
+  constexpr int EVARINT_REPRESENT = -2;
+  /// Returns by read_varint if the input range ends before we finish reading a value
+  constexpr int EVARINT_TRUNCATED = -3;
 
-  /*! \brief writes a varint to a stream.
+  // Maximum number of bytes of a varint-encoded integer of the given type.
+  template <typename T>
+  constexpr size_t VARINT_MAX_LENGTH = (sizeof(T) * 8 + 6) / 7; // i.e. integer ceil(bits / 7)
+
+  /*! \brief writes a varint to an output iterator.  Only supports unsigned integer types.  You
+   * could static cast a signed type to an unsigned type, but note that any actual negative values
+   * (which have a high bit set) will always end up full size since the high bit is set.
    */
-  template<typename OutputIt, typename T>
-  /* Requires T to be both an integral type and unsigned, should be a compile error if it is not */
-  typename std::enable_if<std::is_integral<T>::value && std::is_unsigned<T>::value, void>::type 
-  write_varint(OutputIt &&dest, T i) {
-    /* Make sure that there is one after this */
-    while (i >= 0x80) {
-      *dest = (static_cast<char>(i) & 0x7f) | 0x80; 
-      ++dest;
-      i >>= 7;			/* I should be in multiples of 7, this should just get the next part */
+  template <typename OutputIt, typename T, std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T>, int> = 0>
+  void write_varint(OutputIt&& it, T i) {
+#ifndef NDEBUG
+    size_t count = 0;
+#endif
+    while (i > 0b0111'1111) {
+      // Write the lower 7 bits with the 8th continuation bit set:
+      assert(++count < VARINT_MAX_LENGTH<T>);
+      *it++ = static_cast<char>((i & 0b0111'1111) | 0b1000'0000);
+      i >>= 7;
     }
-    /* writes the last one to dest */
-    *dest = static_cast<char>(i);
-    dest++;			/* Seems kinda pointless... */
+    // Last byte (7 bits or less, no continuation bit)
+    assert(++count <= VARINT_MAX_LENGTH<T>);
+    *it++ = static_cast<char>(i);
   }
 
   /*! \brief Returns the string that represents the varint
    */
   template<typename T>
-    std::string get_varint_data(const T& v)
-    {
-      std::stringstream ss;
-      write_varint(std::ostreambuf_iterator<char>(ss), v);
-      return ss.str();
-    }
-  /*! \brief reads in the varint that is pointed to by InputIt into write
-   */ 
-  template<int bits, typename InputIt, typename T>
-    typename std::enable_if<std::is_integral<T>::value && std::is_unsigned<T>::value && 0 <= bits && bits <= std::numeric_limits<T>::digits, int>::type
-    read_varint(InputIt &&first, InputIt &&last, T &write) {
-    int read = 0;
-    write = 0;
-    for (int shift = 0;; shift += 7) {
-      if (first == last) {
-	return read; 
-      }
-      unsigned char byte = *first;
-      ++first;
-      ++read;
-      if (shift + 7 >= bits && byte >= 1 << (bits - shift)) {
-	return EVARINT_OVERFLOW;
-      }
-      if (byte == 0 && shift != 0) {
-	return EVARINT_REPRESENT;
-      }
-
-      write |= static_cast<T>(byte & 0x7f) << shift; /* Does the actually placing into write, stripping the first bit */
-
-      /* If there is no next */
-      if ((byte & 0x80) == 0) {
-	break;
-      }
-    }
-    return read;
+  std::string get_varint_data(const T& v)
+  {
+    std::string result;
+    write_varint(std::back_insert_iterator{result}, v);
+    return result;
   }
 
-  /*! \brief Wrapper around the other read_varint,
-   *  Sets template parameters for you.
+  /*! \brief reads in the varint that is pointed to by InputIt into write.  `it` will modified to
+   * the position after the varint bytes that we read.  Returns the number of bytes read on success,
+   * or one of the negative EVARIANT_* constants on failure.
+   */ 
+  template <typename It, typename EndIt, typename T, std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T>, int> = 0>
+  int read_varint(It&& it, const EndIt& end, T& write) {
+    constexpr size_t bits = sizeof(T) * 8;
+
+    bool more = true;
+    int read = 0;
+    write = 0;
+    for (size_t shift = 0; more && it != end; shift += 7)
+    {
+      auto byte = static_cast<unsigned char>(*it++);
+      ++read;
+
+      // If byte is all 0s and this isn't the first byte then something is wrong: we have a final
+      // byte containing nothing significant, but we should never have produced that.
+      if (byte == 0 && shift)
+        return EVARINT_REPRESENT;
+
+      // If we have <= 7 bits of space remaining then the value must fit and must not have a continuation bit
+      if (size_t bits_avail = bits - shift; bits_avail <= 7 && byte >= 1 << bits_avail)
+        return EVARINT_OVERFLOW;
+
+      more = byte & 0b1000'0000; // continuation bit
+
+      write |= static_cast<T>(byte & 0b0111'1111) << shift; // 7-bit value
+    }
+
+    return more ? EVARINT_TRUNCATED : read;
+  }
+
+  // Overloads to allow {read,write}_varint to be called with const iterators
+  template <typename OutputIt, typename T, std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T>, int> = 0>
+  auto write_varint(const OutputIt& it_, T i) { return write_varint(OutputIt{it_}, i); }
+
+  template <typename It, typename T, std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T>, int> = 0>
+  auto read_varint(const It& it_, const It& end, T& i) { return read_varint(It{it_}, end, i); }
+
+
+  /*! \brief reads the varint from an encoded string into `write`. Returns the number of bytes
+   * consumed, or an error value (as above).
    */
-  template<typename InputIt, typename T>
-    int read_varint(InputIt &&first, InputIt &&last, T &i) {
-    return read_varint<std::numeric_limits<T>::digits>(std::forward<InputIt>(first), std::forward<InputIt>(last), i);
+  template <typename T, std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T>, int> = 0>
+  int read_varint(std::string_view s, T& write) {
+    return read_varint(s.begin(), s.end(), write);
   }
 }

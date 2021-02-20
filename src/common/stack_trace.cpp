@@ -1,4 +1,4 @@
-// Copyright (c) 2016-2018, The Monero Project
+// Copyright (c) 2016-2019, The Monero Project
 // Copyright (c)      2018, The Beldex Project
 //
 // All rights reserved.
@@ -45,7 +45,7 @@
 #endif
 #include <boost/algorithm/string.hpp>
 #include "common/stack_trace.h"
-#include "misc_log_ex.h"
+#include "epee/misc_log_ex.h"
 
 #undef BELDEX_DEFAULT_LOG_CATEGORY
 #define BELDEX_DEFAULT_LOG_CATEGORY "stacktrace"

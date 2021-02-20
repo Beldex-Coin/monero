@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -41,11 +41,11 @@
 #include <boost/archive/portable_binary_oarchive.hpp>
 #include "cryptonote_basic.h"
 #include "common/unordered_containers_boost_serialization.h"
+#include "common/util.h"
 #include "crypto/crypto.h"
 #include "ringct/rctTypes.h"
 #include "ringct/rctOps.h"
 
-//namespace cryptonote {
 namespace boost
 {
   namespace serialization
@@ -147,49 +147,59 @@ namespace boost
     a & x.target;
   }
 
+  template <class Archive>
+  inline void serialize(Archive &a, cryptonote::txversion &x, const boost::serialization::version_type ver)
+  {
+    uint16_t v = static_cast<uint16_t>(x);
+    a & v;
+    if (v >= tools::enum_count<cryptonote::txversion>)
+      throw boost::archive::archive_exception(boost::archive::archive_exception::other_exception, "Unsupported tx version");
+    x = static_cast<cryptonote::txversion>(v);
+  }
+
+  template <class Archive>
+  inline void serialize(Archive &a, cryptonote::txtype &x, const boost::serialization::version_type ver)
+  {
+    uint16_t txtype = static_cast<uint16_t>(x);
+    a & txtype;
+    if (txtype >= tools::enum_count<cryptonote::txtype>)
+      throw boost::archive::archive_exception(boost::archive::archive_exception::other_exception, "Unsupported tx type");
+    x = static_cast<cryptonote::txtype>(txtype);
+  }
 
   template <class Archive>
   inline void serialize(Archive &a, cryptonote::transaction_prefix &x, const boost::serialization::version_type ver)
   {
     a & x.version;
-    if (x.version > 2)
+    if (x.version >= cryptonote::txversion::v3_per_output_unlock_times)
     {
       a & x.output_unlock_times;
-      if (x.version == cryptonote::transaction::version_3_per_output_unlock_times)
-        a & x.is_deregister;
+      if (x.version == cryptonote::txversion::v3_per_output_unlock_times) {
+        bool is_deregister = x.type == cryptonote::txtype::state_change;
+        a & is_deregister;
+        x.type = is_deregister ? cryptonote::txtype::state_change : cryptonote::txtype::standard;
+      }
     }
     a & x.unlock_time;
     a & x.vin;
     a & x.vout;
     a & x.extra;
-    if (x.version >= cryptonote::transaction::version_4_tx_types)
+    if (x.version >= cryptonote::txversion::v4_tx_types)
       a & x.type;
   }
 
   template <class Archive>
   inline void serialize(Archive &a, cryptonote::transaction &x, const boost::serialization::version_type ver)
   {
-    a & x.version;
-    if (x.version > 2)
-    {
-      a & x.output_unlock_times;
-      if (x.version == cryptonote::transaction::version_3_per_output_unlock_times)
-        a & x.is_deregister;
-    }
-    a & x.unlock_time;
-    a & x.vin;
-    a & x.vout;
-    a & x.extra;
-    if (x.version >= cryptonote::transaction::version_4_tx_types)
-      a & x.type;
-    if (x.version == 1)
+    serialize(a, static_cast<cryptonote::transaction_prefix &>(x), ver);
+    if (x.version == cryptonote::txversion::v1)
     {
       a & x.signatures;
     }
     else
     {
       a & (rct::rctSigBase&)x.rct_signatures;
-      if (x.rct_signatures.type != rct::RCTTypeNull)
+      if (x.rct_signatures.type != rct::RCTType::Null)
         a & x.rct_signatures.p;
     }
   }
@@ -261,6 +271,15 @@ namespace boost
   }
 
   template <class Archive>
+  inline void serialize(Archive &a, rct::clsag &x, const boost::serialization::version_type ver)
+  {
+    a & x.s;
+    a & x.c1;
+    // a & x.I; // not serialized, we can recover it from the tx vin
+    a & x.D;
+  }
+
+  template <class Archive>
   inline void serialize(Archive &a, rct::ecdhTuple &x, const boost::serialization::version_type ver)
   {
     a & x.mask;
@@ -280,6 +299,9 @@ namespace boost
   inline void serialize(Archive &a, rct::multisig_out &x, const boost::serialization::version_type ver)
   {
     a & x.c;
+    if (ver < 1)
+      return;
+    a & x.mu_p;
   }
 
   template <class Archive>
@@ -308,13 +330,13 @@ namespace boost
   inline void serialize(Archive &a, rct::rctSigBase &x, const boost::serialization::version_type ver)
   {
     a & x.type;
-    if (x.type == rct::RCTTypeNull)
+    if (x.type == rct::RCTType::Null)
       return;
-    if (x.type != rct::RCTTypeFull && x.type != rct::RCTTypeSimple && x.type != rct::RCTTypeBulletproof && x.type != rct::RCTTypeBulletproof2)
+    if (!tools::equals_any(x.type, rct::RCTType::Full, rct::RCTType::Simple, rct::RCTType::Bulletproof, rct::RCTType::Bulletproof2, rct::RCTType::CLSAG))
       throw boost::archive::archive_exception(boost::archive::archive_exception::other_exception, "Unsupported rct type");
     // a & x.message; message is not serialized, as it can be reconstructed from the tx data
     // a & x.mixRing; mixRing is not serialized, as it can be reconstructed from the offsets
-    if (x.type == rct::RCTTypeSimple) // moved to prunable with bulletproofs
+    if (x.type == rct::RCTType::Simple) // moved to prunable with bulletproofs
       a & x.pseudoOuts;
     a & x.ecdhInfo;
     serializeOutPk(a, x.outPk, ver);
@@ -328,6 +350,8 @@ namespace boost
     if (x.rangeSigs.empty())
       a & x.bulletproofs;
     a & x.MGs;
+    if (ver >= 1u)
+      a & x.CLSAGs;
     if (x.rangeSigs.empty())
       a & x.pseudoOuts;
   }
@@ -336,13 +360,13 @@ namespace boost
   inline void serialize(Archive &a, rct::rctSig &x, const boost::serialization::version_type ver)
   {
     a & x.type;
-    if (x.type == rct::RCTTypeNull)
+    if (x.type == rct::RCTType::Null)
       return;
-    if (x.type != rct::RCTTypeFull && x.type != rct::RCTTypeSimple && x.type != rct::RCTTypeBulletproof && x.type != rct::RCTTypeBulletproof2)
+    if (!tools::equals_any(x.type, rct::RCTType::Full, rct::RCTType::Simple, rct::RCTType::Bulletproof, rct::RCTType::Bulletproof2, rct::RCTType::CLSAG))
       throw boost::archive::archive_exception(boost::archive::archive_exception::other_exception, "Unsupported rct type");
     // a & x.message; message is not serialized, as it can be reconstructed from the tx data
     // a & x.mixRing; mixRing is not serialized, as it can be reconstructed from the offsets
-    if (x.type == rct::RCTTypeSimple)
+    if (x.type == rct::RCTType::Simple)
       a & x.pseudoOuts;
     a & x.ecdhInfo;
     serializeOutPk(a, x.outPk, ver);
@@ -352,10 +376,21 @@ namespace boost
     if (x.p.rangeSigs.empty())
       a & x.p.bulletproofs;
     a & x.p.MGs;
-    if (x.type == rct::RCTTypeBulletproof || x.type == rct::RCTTypeBulletproof2)
+    if (ver >= 1u)
+      a & x.p.CLSAGs;
+    if (rct::is_rct_bulletproof(x.type))
       a & x.p.pseudoOuts;
+  }
+
+  template <class Archive>
+  inline void serialize(Archive &a, rct::RCTConfig &x, const boost::serialization::version_type ver)
+  {
+    a & x.range_proof_type;
+    a & x.bp_version;
   }
 }
 }
 
-//}
+BOOST_CLASS_VERSION(rct::rctSigPrunable, 1)
+BOOST_CLASS_VERSION(rct::rctSig, 1)
+BOOST_CLASS_VERSION(rct::multisig_out, 1)

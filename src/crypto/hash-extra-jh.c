@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -31,7 +31,6 @@
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <string.h>
 
 #include "jh.h"
 #include "hash-ops.h"

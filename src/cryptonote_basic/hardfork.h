@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -28,8 +28,8 @@
 
 #pragma once
 
-#include "syncobj.h"
 #include "cryptonote_basic/cryptonote_basic.h"
+#include <mutex>
 
 namespace cryptonote
 {
@@ -38,6 +38,16 @@ namespace cryptonote
   class HardFork
   {
   public:
+    struct Params
+    {
+      uint8_t version;
+      uint64_t height;
+      uint8_t threshold;
+      time_t time;
+    };
+
+    constexpr static uint8_t INVALID_HF_VERSION         = 255;
+    constexpr static uint64_t INVALID_HF_VERSION_HEIGHT = static_cast<uint64_t>(-1);
     typedef enum {
       LikelyForked,
       UpdateNeeded,
@@ -49,6 +59,17 @@ namespace cryptonote
     static const time_t DEFAULT_UPDATE_TIME = 31557600 / 2;
     static const uint64_t DEFAULT_WINDOW_SIZE = 10080; // supermajority window check length - a week
     static const uint8_t DEFAULT_THRESHOLD_PERCENT = 80;
+
+    struct ParamsIterator
+    {
+      const Params *begin_, *end_;
+      constexpr Params const *begin() { return begin_; };
+      constexpr Params const *end()   { return end_; };
+    };
+
+    // NOTE: Returns INVALID_HF_VERSION_HEIGHT if version not specified for nettype
+    static uint64_t get_hardcoded_hard_fork_height(network_type nettype, cryptonote::network_version version);
+    static ParamsIterator get_hardcoded_hard_forks(network_type nettype);
 
     /**
      * @brief creates a new HardFork object
@@ -66,12 +87,15 @@ namespace cryptonote
      *
      * returns true if no error, false otherwise
      *
-     * @param version the major block version for the fork
-     * @param height The height the hardfork takes effect
+     * @param version the major block version for the fork, must be > 0 and > the last-added hf
+     * @param height The height the hardfork takes effect; must be > the last-added hf
      * @param threshold The threshold of votes needed for this fork (0-100)
-     * @param time Approximate time of the hardfork (seconds since epoch)
+     * @param time Approximate time of the hardfork (seconds since epoch); must be >= the timestamp
+     * of the last-added hf
+     *
+     * @throws std::invalid_argument if any parameters are invalid
      */
-    bool add_fork(uint8_t version, uint64_t height, uint8_t threshold, time_t time);
+    void add_fork(uint8_t version, uint64_t height, uint8_t threshold, time_t time);
 
     /**
      * @brief add a new hardfork height
@@ -81,8 +105,10 @@ namespace cryptonote
      * @param version the major block version for the fork
      * @param height The height the hardfork takes effect
      * @param time Approximate time of the hardfork (seconds since epoch)
+     *
+     * @throws std::invalid_argument if any parameters are invalid
      */
-    bool add_fork(uint8_t version, uint64_t height, time_t time);
+    void add_fork(uint8_t version, uint64_t height, time_t time);
 
     /**
      * @brief initialize the object
@@ -230,14 +256,6 @@ namespace cryptonote
      */
     uint64_t get_window_size() const { return window_size; }
 
-    struct Params {
-      uint8_t version;
-      uint8_t threshold;
-      uint64_t height;
-      time_t time;
-      Params(uint8_t version, uint64_t height, uint8_t threshold, time_t time): version(version), threshold(threshold), height(height), time(time) {}
-    };
-
   private:
 
     uint8_t get_block_version(uint64_t height) const;
@@ -266,7 +284,7 @@ namespace cryptonote
     unsigned int last_versions[256]; /* count of the block versions in the last N blocks */
     uint32_t current_fork_index;
 
-    mutable epee::critical_section lock;
+    mutable std::recursive_mutex lock;
   };
 
 }  // namespace cryptonote

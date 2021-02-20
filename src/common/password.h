@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -32,8 +32,10 @@
 
 #include <string>
 #include <atomic>
-#include <boost/optional/optional.hpp>
-#include "wipeable_string.h"
+#include <optional>
+#include <functional>
+#include <cstddef>
+#include "epee/wipeable_string.h"
 
 namespace tools
 {
@@ -46,21 +48,11 @@ namespace tools
     password_container() noexcept;
 
     //! `password` is used as password
-    password_container(std::string&& password) noexcept;
-    password_container(const epee::wipeable_string& password) noexcept;
+    password_container(epee::wipeable_string password) noexcept;
 
     //! \return A password from stdin TTY prompt or `std::cin` pipe.
-    static boost::optional<password_container> prompt(bool verify, const char *mesage = "Password", bool hide_input = true);
+    static std::optional<password_container> prompt(bool verify, const char *mesage = "Password", bool hide_input = true);
     static std::atomic<bool> is_prompting;
-
-    password_container(const password_container&) = delete;
-    password_container(password_container&& rhs) = default;
-
-    //! Wipes internal password
-    ~password_container() noexcept;
-
-    password_container& operator=(const password_container&) = delete;
-    password_container& operator=(password_container&&) = default;
 
     const epee::wipeable_string &password() const noexcept { return m_password; }
 
@@ -72,6 +64,10 @@ namespace tools
   {
     login() = default;
 
+    /// Constructs a login from a username/password.  Does not prompt.
+    login(std::string_view user, epee::wipeable_string pass)
+        : username{user}, password{std::move(pass)} {}
+
     /*!
        Extracts username and password from the format `username:password`. A
        blank username or password is allowed. If the `:` character is not
@@ -82,16 +78,10 @@ namespace tools
        \param verify is passed to `password_container::prompt` if necessary.
        \param message is passed to `password_container::prompt` if necessary.
 
-       \return The username and password, or boost::none if
+       \return The username and password, or std::nullopt if
          `password_container::prompt` fails.
      */
-    static boost::optional<login> parse(std::string&& userpass, bool verify, const std::function<boost::optional<password_container>(bool)> &prompt);
-
-    login(const login&) = delete;
-    login(login&&) = default;
-    ~login() = default;
-    login& operator=(const login&) = delete;
-    login& operator=(login&&) = default;
+    static std::optional<login> parse(std::string&& userpass, bool verify, const std::function<std::optional<password_container>(bool)> &prompt);
 
     std::string username;
     password_container password;

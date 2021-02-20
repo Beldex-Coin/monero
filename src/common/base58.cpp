@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -30,78 +30,45 @@
 
 #include "base58.h"
 
-#include <assert.h>
-#include <string>
+#include <cassert>
+#include <cstring>
 #include <vector>
+#include <string_view>
 
 #include "crypto/hash.h"
-#include "int-util.h"
+#include "epee/int-util.h"
 #include "varint.h"
 
 namespace tools
 {
+  using namespace std::literals;
   namespace base58
   {
     namespace
     {
-      const char alphabet[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-      const size_t alphabet_size = sizeof(alphabet) - 1;
-      const size_t encoded_block_sizes[] = {0, 2, 3, 5, 6, 7, 9, 10, 11};
-      const size_t full_block_size = sizeof(encoded_block_sizes) / sizeof(encoded_block_sizes[0]) - 1;
-      const size_t full_encoded_block_size = encoded_block_sizes[full_block_size];
-      const size_t addr_checksum_size = 4;
+      constexpr std::string_view alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"sv;
+      constexpr size_t full_block_size = 8;
+      constexpr std::array<uint8_t, full_block_size + 1> encoded_block_sizes = {0, 2, 3, 5, 6, 7, 9, 10, 11};
+      constexpr size_t full_encoded_block_size = encoded_block_sizes.back();
+      constexpr std::array<int8_t, full_encoded_block_size + 1> decoded_block_sizes = {0, -1, 1, 2, -1, 3, 4, 5, -1, 6, 7, 8};
+      constexpr size_t addr_checksum_size = 4;
 
-      struct reverse_alphabet
+      struct reverse_alphabet_table
       {
-        reverse_alphabet()
+        std::array<int8_t, 256> from_b58_lut;
+        constexpr reverse_alphabet_table() noexcept : from_b58_lut{}
         {
-          m_data.resize(alphabet[alphabet_size - 1] - alphabet[0] + 1, -1);
-
-          for (size_t i = 0; i < alphabet_size; ++i)
-          {
-            size_t idx = static_cast<size_t>(alphabet[i] - alphabet[0]);
-            m_data[idx] = static_cast<int8_t>(i);
-          }
+          for (size_t i = 0; i < from_b58_lut.size(); ++i)
+            from_b58_lut[i] = -1;
+          for (size_t i = 0; i < alphabet.size(); i++)
+            from_b58_lut[alphabet[i]] = i;
         }
 
-        int operator()(char letter) const
+        constexpr int8_t operator[](char letter) const
         {
-          size_t idx = static_cast<size_t>(letter - alphabet[0]);
-          return idx < m_data.size() ? m_data[idx] : -1;
+          return from_b58_lut[static_cast<unsigned char>(letter)];
         }
-
-        static reverse_alphabet instance;
-
-      private:
-        std::vector<int8_t> m_data;
-      };
-
-      reverse_alphabet reverse_alphabet::instance;
-
-      struct decoded_block_sizes
-      {
-        decoded_block_sizes()
-        {
-          m_data.resize(encoded_block_sizes[full_block_size] + 1, -1);
-          for (size_t i = 0; i <= full_block_size; ++i)
-          {
-            m_data[encoded_block_sizes[i]] = static_cast<int>(i);
-          }
-        }
-
-        int operator()(size_t encoded_block_size) const
-        {
-          assert(encoded_block_size <= full_encoded_block_size);
-          return m_data[encoded_block_size];
-        }
-
-        static decoded_block_sizes instance;
-
-      private:
-        std::vector<int> m_data;
-      };
-
-      decoded_block_sizes decoded_block_sizes::instance;
+      } constexpr reverse_alphabet;
 
       uint64_t uint_8be_to_64(const uint8_t* data, size_t size)
       {
@@ -128,8 +95,8 @@ namespace tools
         int i = static_cast<int>(encoded_block_sizes[size]) - 1;
         while (0 < num)
         {
-          uint64_t remainder = num % alphabet_size;
-          num /= alphabet_size;
+          uint64_t remainder = num % alphabet.size();
+          num /= alphabet.size();
           res[i] = alphabet[remainder];
           --i;
         }
@@ -139,7 +106,7 @@ namespace tools
       {
         assert(1 <= size && size <= full_encoded_block_size);
 
-        int res_size = decoded_block_sizes::instance(size);
+        int res_size = decoded_block_sizes[size];
         if (res_size <= 0)
           return false; // Invalid block size
 
@@ -147,7 +114,7 @@ namespace tools
         uint64_t order = 1;
         for (size_t i = size - 1; i < size; --i)
         {
-          int digit = reverse_alphabet::instance(block[i]);
+          auto digit = reverse_alphabet[block[i]];
           if (digit < 0)
             return false; // Invalid symbol
 
@@ -157,7 +124,7 @@ namespace tools
             return false; // Overflow
 
           res_num = tmp;
-          order *= alphabet_size; // Never overflows, 58^10 < 2^64
+          order *= alphabet.size(); // Never overflows, 58^10 < 2^64
         }
 
         if (static_cast<size_t>(res_size) < full_block_size && (UINT64_C(1) << (8 * res_size)) <= res_num)
@@ -169,7 +136,7 @@ namespace tools
       }
     }
 
-    std::string encode(const std::string& data)
+    std::string encode(std::string_view data)
     {
       if (data.empty())
         return std::string();
@@ -192,7 +159,7 @@ namespace tools
       return res;
     }
 
-    bool decode(const std::string& enc, std::string& data)
+    bool decode(std::string_view enc, std::string& data)
     {
       if (enc.empty())
       {
@@ -202,7 +169,7 @@ namespace tools
 
       size_t full_block_count = enc.size() / full_encoded_block_size;
       size_t last_block_size = enc.size() % full_encoded_block_size;
-      int last_block_decoded_size = decoded_block_sizes::instance(last_block_size);
+      int8_t last_block_decoded_size = decoded_block_sizes[last_block_size];
       if (last_block_decoded_size < 0)
         return false; // Invalid enc length
       size_t data_size = full_block_count * full_block_size + last_block_decoded_size;
@@ -224,7 +191,7 @@ namespace tools
       return true;
     }
 
-    std::string encode_addr(uint64_t tag, const std::string& data)
+    std::string encode_addr(uint64_t tag, std::string_view data)
     {
       std::string buf = get_varint_data(tag);
       buf += data;
@@ -234,7 +201,7 @@ namespace tools
       return encode(buf);
     }
 
-    bool decode_addr(const std::string &addr, uint64_t& tag, std::string& data)
+    bool decode_addr(std::string_view addr, uint64_t& tag, std::string& data)
     {
       std::string addr_data;
       bool r = decode(addr, addr_data);

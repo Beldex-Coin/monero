@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 //
 // All rights reserved.
 //
@@ -30,29 +30,31 @@
  #define __STDC_FORMAT_MACROS // NOTE(beldex): Explicitly define the PRIu64 macro on Mingw
 #endif
 
-#include <boost/algorithm/string.hpp>
 #include "common/command_line.h"
 #include "serialization/crypto.h"
 #include "cryptonote_core/cryptonote_core.h"
 #include "blockchain_objects.h"
 #include "blockchain_db/blockchain_db.h"
-#include "blockchain_db/db_types.h"
 #include "version.h"
 
 #undef BELDEX_DEFAULT_LOG_CATEGORY
 #define BELDEX_DEFAULT_LOG_CATEGORY "bcutil"
 
 namespace po = boost::program_options;
-using namespace epee;
 using namespace cryptonote;
 
-static std::map<uint64_t, uint64_t> load_outputs(const std::string &filename)
+static std::map<uint64_t, uint64_t> load_outputs(const fs::path& filename)
 {
   std::map<uint64_t, uint64_t> outputs;
   uint64_t amount = std::numeric_limits<uint64_t>::max();
-  FILE *f;
 
-  f = fopen(filename.c_str(), "r");
+  FILE *f =
+#ifdef _WIN32
+      _wfopen(filename.c_str(), L"r");
+#else
+      fopen(filename.c_str(), "r");
+#endif
+
   if (!f)
   {
     MERROR("Failed to load outputs from " << filename << ": " << strerror(errno));
@@ -105,30 +107,23 @@ int main(int argc, char* argv[])
 
   epee::string_tools::set_module_name_and_folder(argv[0]);
 
-  std::string default_db_type = "lmdb";
-
-  std::string available_dbs = cryptonote::blockchain_db_types(", ");
-  available_dbs = "available: " + available_dbs;
-
   uint32_t log_level = 0;
 
   tools::on_startup();
 
-  po::options_description desc_cmd_only("Command line options");
-  po::options_description desc_cmd_sett("Command line options and settings options");
+  auto opt_size = command_line::boost_option_sizes();
+
+  po::options_description desc_cmd_only("Command line options", opt_size.first, opt_size.second);
+  po::options_description desc_cmd_sett("Command line options and settings options", opt_size.first, opt_size.second);
   const command_line::arg_descriptor<std::string> arg_log_level  = {"log-level",  "0-4 or categories", ""};
-  const command_line::arg_descriptor<std::string> arg_database = {
-    "database", available_dbs.c_str(), default_db_type
-  };
   const command_line::arg_descriptor<bool> arg_verbose  = {"verbose", "Verbose output", false};
   const command_line::arg_descriptor<bool> arg_dry_run  = {"dry-run", "Do not actually prune", false};
   const command_line::arg_descriptor<std::string> arg_input = {"input", "Path to the known spent outputs file"};
 
   command_line::add_arg(desc_cmd_sett, cryptonote::arg_data_dir);
   command_line::add_arg(desc_cmd_sett, cryptonote::arg_testnet_on);
-  command_line::add_arg(desc_cmd_sett, cryptonote::arg_stagenet_on);
+  command_line::add_arg(desc_cmd_sett, cryptonote::arg_devnet_on);
   command_line::add_arg(desc_cmd_sett, arg_log_level);
-  command_line::add_arg(desc_cmd_sett, arg_database);
   command_line::add_arg(desc_cmd_sett, arg_verbose);
   command_line::add_arg(desc_cmd_sett, arg_dry_run);
   command_line::add_arg(desc_cmd_sett, arg_input);
@@ -150,7 +145,7 @@ int main(int argc, char* argv[])
 
   if (command_line::get_arg(vm, command_line::arg_help))
   {
-    std::cout << "Beldex '" << BELDEX_RELEASE_NAME << "' (v" << BELDEX_VERSION_FULL << ")" << ENDL << ENDL;
+    std::cout << "Beldex '" << BELDEX_RELEASE_NAME << "' (v" << BELDEX_VERSION_FULL << ")\n\n";
     std::cout << desc_options << std::endl;
     return 1;
   }
@@ -163,46 +158,37 @@ int main(int argc, char* argv[])
 
   LOG_PRINT_L0("Starting...");
 
-  std::string opt_data_dir = command_line::get_arg(vm, cryptonote::arg_data_dir);
   bool opt_testnet = command_line::get_arg(vm, cryptonote::arg_testnet_on);
-  bool opt_stagenet = command_line::get_arg(vm, cryptonote::arg_stagenet_on);
-  network_type net_type = opt_testnet ? TESTNET : opt_stagenet ? STAGENET : MAINNET;
+  bool opt_devnet = command_line::get_arg(vm, cryptonote::arg_devnet_on);
+  network_type net_type = opt_testnet ? TESTNET : opt_devnet ? DEVNET : MAINNET;
   bool opt_verbose = command_line::get_arg(vm, arg_verbose);
   bool opt_dry_run = command_line::get_arg(vm, arg_dry_run);
 
-  std::string db_type = command_line::get_arg(vm, arg_database);
-  if (!cryptonote::blockchain_valid_db_type(db_type))
-  {
-    std::cerr << "Invalid database type: " << db_type << std::endl;
-    return 1;
-  }
-
-  const std::string input = command_line::get_arg(vm, arg_input);
+  const auto input = fs::u8path(command_line::get_arg(vm, arg_input));
 
   LOG_PRINT_L0("Initializing source blockchain (BlockchainDB)");
   blockchain_objects_t blockchain_objects = {};
   Blockchain *core_storage = &blockchain_objects.m_blockchain;
-  BlockchainDB *db = new_db(db_type);
+  BlockchainDB *db = new_db();
   if (db == NULL)
   {
-    LOG_ERROR("Attempted to use non-existent database type: " << db_type);
-    throw std::runtime_error("Attempting to use non-existent database type");
+    LOG_ERROR("Failed to initialize a database");
+    throw std::runtime_error("Failed to initialize a database");
   }
-  LOG_PRINT_L0("database: " << db_type);
 
-  const std::string filename = (boost::filesystem::path(opt_data_dir) / db->get_db_name()).string();
+  const fs::path filename = fs::u8path(command_line::get_arg(vm, cryptonote::arg_data_dir)) / db->get_db_name();
   LOG_PRINT_L0("Loading blockchain from folder " << filename << " ...");
 
   try
   {
-    db->open(filename, 0);
+    db->open(filename, core_storage->nettype(), 0);
   }
   catch (const std::exception& e)
   {
     LOG_PRINT_L0("Error opening database: " << e.what());
     return 1;
   }
-  r = core_storage->init(db, net_type);
+  r = core_storage->init(db, nullptr /*lns_db*/, net_type);
 
   CHECK_AND_ASSERT_MES(r, 1, "Failed to initialize source blockchain storage");
   LOG_PRINT_L0("Source blockchain storage initialized OK");
@@ -214,26 +200,19 @@ int main(int argc, char* argv[])
 
     LOG_PRINT_L0("Scanning for known spent data...");
     db->for_all_transactions([&](const crypto::hash &txid, const cryptonote::transaction &tx){
-      const bool miner_tx = tx.vin.size() == 1 && tx.vin[0].type() == typeid(txin_gen);
+      const bool miner_tx = tx.vin.size() == 1 && std::holds_alternative<txin_gen>(tx.vin[0]);
       for (const auto &in: tx.vin)
-      {
-        if (in.type() != typeid(txin_to_key))
-          continue;
-        const auto &txin = boost::get<txin_to_key>(in);
-        if (txin.amount == 0)
-          continue;
-
-        outputs[txin.amount].second++;
-      }
+        if (const auto* txin = std::get_if<txin_to_key>(&in); txin && txin->amount != 0)
+          outputs[txin->amount].second++;
 
       for (const auto &out: tx.vout)
       {
         uint64_t amount = out.amount;
-        if (miner_tx && tx.version >= 2)
+        if (miner_tx && tx.version >= txversion::v2_ringct)
           amount = 0;
         if (amount == 0)
           continue;
-        if (out.target.type() != typeid(txout_to_key))
+        if (!std::holds_alternative<txout_to_key>(out.target))
           continue;
 
         outputs[amount].first++;
@@ -267,7 +246,7 @@ int main(int argc, char* argv[])
     uint64_t num_outputs = db->get_num_outputs(i->first);
     num_total_outputs += num_outputs;
     num_known_spent_outputs += i->second;
-    if (i->first == 0 || is_valid_decomposed_amount(i->first))
+    if (i->first == 0)
     {
       if (opt_verbose)
         MINFO("Ignoring output value " << i->first << ", with " << num_outputs << " outputs");

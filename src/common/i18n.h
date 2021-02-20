@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -27,11 +27,12 @@
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
+#include <string>
 
 #define QT_TRANSLATE_NOOP(context,str) i18n_translate(str,context)
 
 std::string i18n_get_language();
 int i18n_set_language(const char *directory, const char *base, std::string language = std::string());
 const char *i18n_translate(const char *str, const std::string &context);
-static inline std::string get_default_i18n_context() { return std::string(); }
-static inline const char *tr(const char *str) { return i18n_translate(str,get_default_i18n_context()); }
+inline const char *tr(const char *str) { return i18n_translate(str, std::string{}); }
+bool find_embedded_file(const std::string &name, std::string &data); // In the generated translation_files.cpp

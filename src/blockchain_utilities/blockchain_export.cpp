@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // Copyright (c)      2018, The Beldex Project
 //
 // All rights reserved.
@@ -32,14 +32,12 @@
 #include "common/command_line.h"
 #include "cryptonote_core/cryptonote_core.h"
 #include "blockchain_objects.h"
-#include "blockchain_db/db_types.h"
 #include "version.h"
 
 #undef BELDEX_DEFAULT_LOG_CATEGORY
 #define BELDEX_DEFAULT_LOG_CATEGORY "bcutil"
 
 namespace po = boost::program_options;
-using namespace epee;
 
 int main(int argc, char* argv[])
 {
@@ -47,36 +45,27 @@ int main(int argc, char* argv[])
 
   epee::string_tools::set_module_name_and_folder(argv[0]);
 
-  std::string default_db_type = "lmdb";
-
-  std::string available_dbs = cryptonote::blockchain_db_types(", ");
-  available_dbs = "available: " + available_dbs;
-
   uint32_t log_level = 0;
   uint64_t block_stop = 0;
   bool blocks_dat = false;
 
   tools::on_startup();
 
-  boost::filesystem::path output_file_path;
+  auto opt_size = command_line::boost_option_sizes();
 
-  po::options_description desc_cmd_only("Command line options");
-  po::options_description desc_cmd_sett("Command line options and settings options");
+  po::options_description desc_cmd_only("Command line options", opt_size.first, opt_size.second);
+  po::options_description desc_cmd_sett("Command line options and settings options", opt_size.first, opt_size.second);
   const command_line::arg_descriptor<std::string> arg_output_file = {"output-file", "Specify output file", "", true};
   const command_line::arg_descriptor<std::string> arg_log_level  = {"log-level",  "0-4 or categories", ""};
   const command_line::arg_descriptor<uint64_t> arg_block_stop = {"block-stop", "Stop at block number", block_stop};
-  const command_line::arg_descriptor<std::string> arg_database = {
-    "database", available_dbs.c_str(), default_db_type
-  };
   const command_line::arg_descriptor<bool> arg_blocks_dat = {"blocksdat", "Output in blocks.dat format", blocks_dat};
 
 
   command_line::add_arg(desc_cmd_sett, cryptonote::arg_data_dir);
   command_line::add_arg(desc_cmd_sett, arg_output_file);
   command_line::add_arg(desc_cmd_sett, cryptonote::arg_testnet_on);
-  command_line::add_arg(desc_cmd_sett, cryptonote::arg_stagenet_on);
+  command_line::add_arg(desc_cmd_sett, cryptonote::arg_devnet_on);
   command_line::add_arg(desc_cmd_sett, arg_log_level);
-  command_line::add_arg(desc_cmd_sett, arg_database);
   command_line::add_arg(desc_cmd_sett, arg_block_stop);
   command_line::add_arg(desc_cmd_sett, arg_blocks_dat);
 
@@ -97,7 +86,7 @@ int main(int argc, char* argv[])
 
   if (command_line::get_arg(vm, command_line::arg_help))
   {
-    std::cout << "Beldex '" << BELDEX_RELEASE_NAME << "' (v" << BELDEX_VERSION_FULL << ")" << ENDL << ENDL;
+    std::cout << "Beldex '" << BELDEX_RELEASE_NAME << "' (v" << BELDEX_VERSION_FULL << ")\n\n";
     std::cout << desc_options << std::endl;
     return 1;
   }
@@ -112,59 +101,49 @@ int main(int argc, char* argv[])
   LOG_PRINT_L0("Starting...");
 
   bool opt_testnet = command_line::get_arg(vm, cryptonote::arg_testnet_on);
-  bool opt_stagenet = command_line::get_arg(vm, cryptonote::arg_stagenet_on);
-  if (opt_testnet && opt_stagenet)
+  bool opt_devnet = command_line::get_arg(vm, cryptonote::arg_devnet_on);
+  if (opt_testnet && opt_devnet)
   {
-    std::cerr << "Can't specify more than one of --testnet and --stagenet" << std::endl;
+    std::cerr << "Can't specify more than one of --testnet and --devnet" << std::endl;
     return 1;
   }
   bool opt_blocks_dat = command_line::get_arg(vm, arg_blocks_dat);
 
-  std::string m_config_folder;
+  auto config_folder = fs::u8path(command_line::get_arg(vm, cryptonote::arg_data_dir));
 
-  m_config_folder = command_line::get_arg(vm, cryptonote::arg_data_dir);
-
-  std::string db_type = command_line::get_arg(vm, arg_database);
-  if (!cryptonote::blockchain_valid_db_type(db_type))
-  {
-    std::cerr << "Invalid database type: " << db_type << std::endl;
-    return 1;
-  }
-
+  fs::path output_file_path;
   if (command_line::has_arg(vm, arg_output_file))
-    output_file_path = boost::filesystem::path(command_line::get_arg(vm, arg_output_file));
+    output_file_path = fs::u8path(command_line::get_arg(vm, arg_output_file));
   else
-    output_file_path = boost::filesystem::path(m_config_folder) / "export" / BLOCKCHAIN_RAW;
+    output_file_path = config_folder / "export" / BLOCKCHAIN_RAW;
   LOG_PRINT_L0("Export output file: " << output_file_path.string());
 
   LOG_PRINT_L0("Initializing source blockchain (BlockchainDB)");
   blockchain_objects_t blockchain_objects = {};
   Blockchain *core_storage = &blockchain_objects.m_blockchain;
-  BlockchainDB *db = new_db(db_type);
+  BlockchainDB *db = new_db();
   if (db == NULL)
   {
-    LOG_ERROR("Attempted to use non-existent database type: " << db_type);
-    throw std::runtime_error("Attempting to use non-existent database type");
+    LOG_ERROR("Failed to initialize a database");
+    throw std::runtime_error("Failed to initialize a database");
   }
-  LOG_PRINT_L0("database: " << db_type);
+  LOG_PRINT_L0("database: LMDB");
 
-  boost::filesystem::path folder(m_config_folder);
-  folder /= db->get_db_name();
-  const std::string filename = folder.string();
+  auto filename = config_folder / db->get_db_name();
 
   LOG_PRINT_L0("Loading blockchain from folder " << filename << " ...");
   try
   {
-    db->open(filename, DBF_RDONLY);
+    db->open(filename, core_storage->nettype(), DBF_RDONLY);
   }
   catch (const std::exception& e)
   {
     LOG_PRINT_L0("Error opening database: " << e.what());
     return 1;
   }
-  r = core_storage->init(db, opt_testnet ? cryptonote::TESTNET : opt_stagenet ? cryptonote::STAGENET : cryptonote::MAINNET);
+  r = core_storage->init(db, nullptr, opt_testnet ? cryptonote::TESTNET : opt_devnet ? cryptonote::DEVNET : cryptonote::MAINNET);
 
-  if (core_storage->get_blockchain_pruning_seed())
+  if (core_storage->get_blockchain_pruning_seed() && !opt_blocks_dat)
   {
     LOG_PRINT_L0("Blockchain is pruned, cannot export");
     return 1;

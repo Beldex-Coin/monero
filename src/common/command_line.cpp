@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -29,55 +29,80 @@
 // Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
 #include "command_line.h"
-#include <boost/algorithm/string/compare.hpp>
-#include <boost/algorithm/string/predicate.hpp>
 #include "common/i18n.h"
+#include "common/string_util.h"
+#ifdef HAVE_READLINE
+#  include "epee/readline_buffer.h"
+#endif
 
 namespace command_line
 {
-  namespace
+const arg_descriptor<bool> arg_help = {"help", "Produce help message"};
+const arg_descriptor<bool> arg_version = {"version", "Output version information"};
+
+// Terminal sizing.
+//
+// Currently only linux is supported.
+
+#ifdef __linux__
+
+extern "C" {
+#include <sys/ioctl.h>
+#include <stdio.h>
+#include <unistd.h>
+}
+std::pair<unsigned, unsigned> terminal_size() {
+    struct winsize w;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) != -1)
+      return {w.ws_col, w.ws_row};
+    return {0, 0};
+}
+
+#else
+
+std::pair<unsigned, unsigned> terminal_size() { return {0, 0}; }
+
+#endif
+
+
+std::pair<unsigned, unsigned> boost_option_sizes() {
+  std::pair<unsigned, unsigned> result;
+
+  result.first = std::max(
+      terminal_size().first,
+      boost::program_options::options_description::m_default_line_length);
+
+  result.second = result.first - boost::program_options::options_description::m_default_line_length / 2;
+
+  return result;
+}
+
+void clear_screen()
+{
+#ifdef HAVE_READLINE
+  rdln::clear_screen();
+#else
+  std::cout << "\033[2K"; // clear whole line
+  std::cout << "\033c";   // clear current screen and scrollback
+  std::cout << "\033[2J"; // clear current screen only, scrollback is still around
+  std::cout << "\033[3J"; // does nothing, should clear current screen and scrollback
+  std::cout << "\033[1;1H"; // move cursor top/left
+  std::cout << "\r                                                \r" << std::flush; // erase odd chars if the ANSI codes were printed raw
+  #ifdef _WIN32
+  COORD coord{0, 0};
+  CONSOLE_SCREEN_BUFFER_INFO csbi;
+  HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+  if (GetConsoleScreenBufferInfo(h, &csbi))
   {
-    const char* tr(const char* str)
-    {
-      return i18n_translate(str, "command_line");
-    }
+    DWORD cbConSize = csbi.dwSize.X * csbi.dwSize.Y, w;
+    FillConsoleOutputCharacter(h, (TCHAR)' ', cbConSize, coord, &w);
+    if (GetConsoleScreenBufferInfo(h, &csbi))
+      FillConsoleOutputAttribute(h, csbi.wAttributes, cbConSize, coord, &w);
+    SetConsoleCursorPosition(h, coord);
   }
+  #endif
+#endif
+}
 
-  static bool str_compare_with_boost(const std::string &str, char const *check_str)
-  {
-    boost::algorithm::is_iequal ignore_case{};
-    if (boost::algorithm::equals(check_str, str, ignore_case))
-      return true;
-    if (boost::algorithm::equals(command_line::tr(check_str), str, ignore_case))
-      return true;
 
-    return false;
-  }
-
-  bool is_yes(const std::string& str)
-  {
-    bool result = (str == "y" || str == "Y") || str_compare_with_boost(str, "yes");
-    return result;
-  }
-
-  bool is_no(const std::string& str)
-  {
-    bool result = (str == "n" || str == "N") || str_compare_with_boost(str, "no");
-    return result;
-  }
-
-  bool is_cancel(const std::string& str)
-  {
-    bool result = (str == "c" || str == "C") || str_compare_with_boost(str, "cancel");
-    return result;
-  }
-
-  bool is_back(const std::string& str)
-  {
-    bool result = (str == "b" || str == "B") || str_compare_with_boost(str, "back");
-    return result;
-  }
-
-  const arg_descriptor<bool> arg_help = {"help", "Produce help message"};
-  const arg_descriptor<bool> arg_version = {"version", "Output version information"};
 }

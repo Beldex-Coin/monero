@@ -1,4 +1,4 @@
-// Copyright (c) 2018, The Monero Project
+// Copyright (c) 2019, The Monero Project
 //
 // All rights reserved.
 //
@@ -71,10 +71,6 @@ template<typename> class expect;
 
 namespace detail
 {
-    // Shortens the characters in the places that `enable_if` is used below.
-    template<bool C>
-    using enable_if = typename std::enable_if<C>::type;
- 
     struct expect
     {
         //! \throw std::system_error with `ec`, optional `msg` and/or optional `file` + `line`.
@@ -142,7 +138,7 @@ class expect
 
     // MEMBERS
     std::error_code code_;
-    typename std::aligned_storage<sizeof(T), alignof(T)>::type storage_;
+    std::aligned_storage_t<sizeof(T), alignof(T)> storage_;
     // MEMBERS
 
     T& get() noexcept
@@ -201,7 +197,7 @@ public:
     }
 
     //! Copy conversion from `U` to `T`.
-    template<typename U, typename = detail::enable_if<is_convertible<U const&>()>>
+    template<typename U, typename = std::enable_if_t<is_convertible<U const&>()>>
     expect(expect<U> const& src) noexcept(std::is_nothrow_constructible<T, U const&>())
       : code_(src.error()), storage_()
     {
@@ -217,7 +213,7 @@ public:
     }
 
     //! Move conversion from `U` to `T`.
-    template<typename U, typename = detail::enable_if<is_convertible<U>()>>
+    template<typename U, typename = std::enable_if_t<is_convertible<U>()>>
     expect(expect<U>&& src) noexcept(std::is_nothrow_constructible<T, U>())
       : code_(src.error()), storage_()
     {
@@ -327,7 +323,7 @@ public:
         \note This function is `noexcept` when `U == T` is `noexcept`.
         \return False if `has_error()`, otherwise `value() == rhs`.
     */
-    template<typename U, typename = detail::enable_if<!std::is_constructible<std::error_code, U>::value>>
+    template<typename U, typename = std::enable_if_t<!std::is_constructible_v<std::error_code, U>>>
     bool equal(U const& rhs) const noexcept(noexcept(*std::declval<expect<T>>() == rhs))
     {
         return has_value() && get() == rhs;
