@@ -1,4 +1,4 @@
-// Copyright (c) 2018, The Monero Project
+// Copyright (c) 2019, The Monero Project
 //
 // All rights reserved.
 //
@@ -30,8 +30,10 @@
 
 #pragma once
 
-#include <iostream>
 #include <vector>
+#include <stdexcept>
+#include <cstddef>
+#include <cstdint>
 
 namespace tools {
 

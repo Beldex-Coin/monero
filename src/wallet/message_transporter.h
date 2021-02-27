@@ -1,4 +1,4 @@
-// Copyright (c) 2018, The Monero Project
+// Copyright (c) 2019, The Monero Project
 //
 // All rights reserved.
 //
@@ -27,16 +27,14 @@
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
-#include "serialization/keyvalue_serialization.h"
+#include "epee/serialization/keyvalue_serialization.h"
 #include "cryptonote_basic/cryptonote_basic.h"
 #include "cryptonote_basic/cryptonote_boost_serialization.h"
 #include "cryptonote_basic/account_boost_serialization.h"
 #include "cryptonote_basic/cryptonote_basic.h"
-#include "net/http_server_impl_base.h"
-#include "net/http_client.h"
+#include "rpc/http_client.h"
 #include "common/util.h"
-#include "wipeable_string.h"
-#include "serialization/keyvalue_serialization.h"
+#include "epee/wipeable_string.h"
 #include <vector>
 
 namespace mms
@@ -82,24 +80,21 @@ struct transport_message
 class message_transporter
 {
 public:
-  message_transporter();
+  message_transporter() = default;
   void set_options(const std::string &bitmessage_address, const epee::wipeable_string &bitmessage_login);
-  bool send_message(const transport_message &message);
+  void send_message(const transport_message &message);
   bool receive_messages(const std::vector<std::string> &destination_transport_addresses,
                         std::vector<transport_message> &messages);
-  bool delete_message(const std::string &transport_id);
+  void delete_message(const std::string &transport_id);
   void stop() { m_run.store(false, std::memory_order_relaxed); }
   std::string derive_transport_address(const std::string &seed);
-  std::string derive_and_receive_transport_address(const std::string &seed);
-  bool delete_transport_address(const std::string &transport_address);
+  void delete_transport_address(const std::string &transport_address);
 
 private:
-  epee::net_utils::http::http_simple_client m_http_client;
-  std::string m_bitmessage_url;
-  epee::wipeable_string m_bitmessage_login;
-  std::atomic<bool> m_run;
+  cryptonote::rpc::http_client m_http_client;
+  std::atomic<bool> m_run{true};
 
-  bool post_request(const std::string &request, std::string &answer);
+  void post_request(const std::string &request, std::string &answer);
   static std::string get_str_between_tags(const std::string &s, const std::string &start_delim, const std::string &stop_delim);
 
   static void start_xml_rpc_cmd(std::string &xml, const std::string &method_name);

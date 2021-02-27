@@ -30,9 +30,7 @@
 
 #include "gtest/gtest.h"
 
-#include <string_tools.h>
-
-using namespace epee::string_tools;
+#include "epee/string_tools.h"
 
 namespace
 {
@@ -40,7 +38,7 @@ namespace
   void do_pos_test(T expected, const std::string& str)
   {
     T val;
-    ASSERT_TRUE(get_xtype_from_string(val, str));
+    ASSERT_TRUE(epee::string_tools::get_xtype_from_string(val, str));
     ASSERT_EQ(expected, val);
   }
 
@@ -48,7 +46,7 @@ namespace
   void do_neg_test(const std::string& str)
   {
     T val;
-    ASSERT_FALSE(get_xtype_from_string(val, str));
+    ASSERT_FALSE(epee::string_tools::get_xtype_from_string(val, str));
   }
 }
 

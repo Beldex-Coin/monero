@@ -26,27 +26,27 @@
 // STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <boost/filesystem.hpp>
 #include <boost/algorithm/string/predicate.hpp>
 #include <cstdio>
 #include <iostream>
 #include <chrono>
+#include <random>
 #include <thread>
 
 #include "gtest/gtest.h"
 
-#include "string_tools.h"
+#include "epee/string_tools.h"
 #include "blockchain_db/blockchain_db.h"
 #include "blockchain_db/lmdb/db_lmdb.h"
-#ifdef BERKELEY_DB
-#include "blockchain_db/berkeleydb/db_bdb.h"
-#endif
 #include "cryptonote_basic/cryptonote_format_utils.h"
+#include "common/fs.h"
+#include "common/hex.h"
+
+#include "random_path.h"
 
 using namespace cryptonote;
-using epee::string_tools::pod_to_hex;
 
-#define ASSERT_HASH_EQ(a,b) ASSERT_EQ(pod_to_hex(a), pod_to_hex(b))
+#define ASSERT_HASH_EQ(a,b) ASSERT_EQ(tools::type_to_hex(a), tools::type_to_hex(b))
 
 namespace {  // anonymous namespace
 
@@ -87,8 +87,8 @@ const std::vector<std::vector<std::string>> t_transactions =
 // from std::string, this might break.
 bool compare_blocks(const block& a, const block& b)
 {
-  auto hash_a = pod_to_hex(get_block_hash(a));
-  auto hash_b = pod_to_hex(get_block_hash(b));
+  auto hash_a = tools::type_to_hex(get_block_hash(a));
+  auto hash_b = tools::type_to_hex(get_block_hash(b));
 
   return hash_a == hash_b;
 }
@@ -97,8 +97,8 @@ bool compare_blocks(const block& a, const block& b)
 void print_block(const block& blk, const std::string& prefix = "")
 {
   std::cerr << prefix << ": " << std::endl
-            << "\thash - " << pod_to_hex(get_block_hash(blk)) << std::endl
-            << "\tparent - " << pod_to_hex(blk.prev_id) << std::endl
+            << "\thash - " << tools::type_to_hex(get_block_hash(blk)) << std::endl
+            << "\tparent - " << tools::type_to_hex(blk.prev_id) << std::endl
             << "\ttimestamp - " << blk.timestamp << std::endl
   ;
 }
@@ -162,18 +162,18 @@ protected:
     {
       block bl;
       blobdata bd = h2b(i);
-      parse_and_validate_block_from_blob(bd, bl);
-      m_blocks.push_back(bl);
+      CHECK_AND_ASSERT_THROW_MES(parse_and_validate_block_from_blob(bd, bl), "Invalid block");
+      m_blocks.push_back(std::make_pair(bl, bd));
     }
     for (auto& i : t_transactions)
     {
-      std::vector<transaction> txs;
+      std::vector<std::pair<transaction, blobdata>> txs;
       for (auto& j : i)
       {
         transaction tx;
         blobdata bd = h2b(j);
-        parse_and_validate_tx_from_blob(bd, tx);
-        txs.push_back(tx);
+        CHECK_AND_ASSERT_THROW_MES(parse_and_validate_tx_from_blob(bd, tx), "Invalid transaction");
+        txs.push_back(std::make_pair(tx, bd));
       }
       m_txs.push_back(txs);
     }
@@ -186,10 +186,10 @@ protected:
 
   BlockchainDB* m_db;
   HardFork m_hardfork;
-  std::string m_prefix;
-  std::vector<block> m_blocks;
-  std::vector<std::vector<transaction> > m_txs;
-  std::vector<std::string> m_filenames;
+  fs::path m_prefix;
+  std::vector<std::pair<block, blobdata>> m_blocks;
+  std::vector<std::vector<std::pair<transaction, blobdata>>> m_txs;
+  std::vector<fs::path> m_filenames;
 
   void init_hard_fork()
   {
@@ -211,9 +211,9 @@ protected:
     // remove each file the db created, making sure it starts with fname.
     for (auto& f : m_filenames)
     {
-      if (boost::starts_with(f, m_prefix))
+      if (tools::starts_with(f.u8string(), m_prefix.u8string()))
       {
-        boost::filesystem::remove(f);
+        fs::remove(f);
       }
       else
       {
@@ -222,38 +222,34 @@ protected:
     }
 
     // remove directory if it still exists
-    boost::filesystem::remove_all(m_prefix);
+    fs::remove_all(m_prefix);
   }
 
   void set_prefix(const std::string& prefix)
   {
-    m_prefix = prefix;
+    m_prefix = fs::u8path(prefix);
   }
 };
 
 using testing::Types;
 
-typedef Types<BlockchainLMDB
-#ifdef BERKELEY_DB
-  , BlockchainBDB
-#endif
-> implementations;
+typedef Types<BlockchainLMDB> implementations;
 
 TYPED_TEST_CASE(BlockchainDBTest, implementations);
 
 TYPED_TEST(BlockchainDBTest, OpenAndClose)
 {
-  boost::filesystem::path tempPath = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path();
+  fs::path tempPath = random_tmp_file();
   std::string dirPath = tempPath.string();
 
   this->set_prefix(dirPath);
 
   // make sure open does not throw
-  ASSERT_NO_THROW(this->m_db->open(dirPath));
+  ASSERT_NO_THROW(this->m_db->open(dirPath, cryptonote::FAKECHAIN));
   this->get_filenames();
 
   // make sure open when already open DOES throw
-  ASSERT_THROW(this->m_db->open(dirPath), DB_OPEN_FAILURE);
+  ASSERT_THROW(this->m_db->open(dirPath, cryptonote::FAKECHAIN), DB_OPEN_FAILURE);
 
   ASSERT_NO_THROW(this->m_db->close());
 }
@@ -261,15 +257,17 @@ TYPED_TEST(BlockchainDBTest, OpenAndClose)
 TYPED_TEST(BlockchainDBTest, AddBlock)
 {
 
-  boost::filesystem::path tempPath = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path();
+  fs::path tempPath = random_tmp_file();
   std::string dirPath = tempPath.string();
 
   this->set_prefix(dirPath);
 
   // make sure open does not throw
-  ASSERT_NO_THROW(this->m_db->open(dirPath));
+  ASSERT_NO_THROW(this->m_db->open(dirPath, cryptonote::FAKECHAIN));
   this->get_filenames();
   this->init_hard_fork();
+
+  db_wtxn_guard guard(this->m_db);
 
   // adding a block with no parent in the blockchain should throw.
   // note: this shouldn't be possible, but is a good (and cheap) failsafe.
@@ -283,19 +281,19 @@ TYPED_TEST(BlockchainDBTest, AddBlock)
   ASSERT_NO_THROW(this->m_db->add_block(this->m_blocks[1], t_sizes[1], t_sizes[1], t_diffs[1], t_coins[1], this->m_txs[1]));
 
   block b;
-  ASSERT_TRUE(this->m_db->block_exists(get_block_hash(this->m_blocks[0])));
-  ASSERT_NO_THROW(b = this->m_db->get_block(get_block_hash(this->m_blocks[0])));
+  ASSERT_TRUE(this->m_db->block_exists(get_block_hash(this->m_blocks[0].first)));
+  ASSERT_NO_THROW(b = this->m_db->get_block(get_block_hash(this->m_blocks[0].first)));
 
-  ASSERT_TRUE(compare_blocks(this->m_blocks[0], b));
+  ASSERT_TRUE(compare_blocks(this->m_blocks[0].first, b));
 
   ASSERT_NO_THROW(b = this->m_db->get_block_from_height(0));
 
-  ASSERT_TRUE(compare_blocks(this->m_blocks[0], b));
+  ASSERT_TRUE(compare_blocks(this->m_blocks[0].first, b));
 
   // assert that we can't add the same block twice
   ASSERT_THROW(this->m_db->add_block(this->m_blocks[0], t_sizes[0], t_sizes[0], t_diffs[0], t_coins[0], this->m_txs[0]), TX_EXISTS);
 
-  for (auto& h : this->m_blocks[0].tx_hashes)
+  for (auto& h : this->m_blocks[0].first.tx_hashes)
   {
     transaction tx;
     ASSERT_TRUE(this->m_db->tx_exists(h));
@@ -307,15 +305,17 @@ TYPED_TEST(BlockchainDBTest, AddBlock)
 
 TYPED_TEST(BlockchainDBTest, RetrieveBlockData)
 {
-  boost::filesystem::path tempPath = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path();
+  fs::path tempPath = random_tmp_file();
   std::string dirPath = tempPath.string();
 
   this->set_prefix(dirPath);
 
   // make sure open does not throw
-  ASSERT_NO_THROW(this->m_db->open(dirPath));
+  ASSERT_NO_THROW(this->m_db->open(dirPath, cryptonote::FAKECHAIN));
   this->get_filenames();
   this->init_hard_fork();
+
+  db_wtxn_guard guard(this->m_db);
 
   ASSERT_NO_THROW(this->m_db->add_block(this->m_blocks[0], t_sizes[0], t_sizes[0],  t_diffs[0], t_coins[0], this->m_txs[0]));
 
@@ -327,21 +327,21 @@ TYPED_TEST(BlockchainDBTest, RetrieveBlockData)
   ASSERT_NO_THROW(this->m_db->add_block(this->m_blocks[1], t_sizes[1], t_sizes[1], t_diffs[1], t_coins[1], this->m_txs[1]));
   ASSERT_EQ(t_diffs[1] - t_diffs[0], this->m_db->get_block_difficulty(1));
 
-  ASSERT_HASH_EQ(get_block_hash(this->m_blocks[0]), this->m_db->get_block_hash_from_height(0));
+  ASSERT_HASH_EQ(get_block_hash(this->m_blocks[0].first), this->m_db->get_block_hash_from_height(0));
 
   std::vector<block> blks;
   ASSERT_NO_THROW(blks = this->m_db->get_blocks_range(0, 1));
   ASSERT_EQ(2, blks.size());
   
-  ASSERT_HASH_EQ(get_block_hash(this->m_blocks[0]), get_block_hash(blks[0]));
-  ASSERT_HASH_EQ(get_block_hash(this->m_blocks[1]), get_block_hash(blks[1]));
+  ASSERT_HASH_EQ(get_block_hash(this->m_blocks[0].first), get_block_hash(blks[0]));
+  ASSERT_HASH_EQ(get_block_hash(this->m_blocks[1].first), get_block_hash(blks[1]));
 
   std::vector<crypto::hash> hashes;
   ASSERT_NO_THROW(hashes = this->m_db->get_hashes_range(0, 1));
   ASSERT_EQ(2, hashes.size());
 
-  ASSERT_HASH_EQ(get_block_hash(this->m_blocks[0]), hashes[0]);
-  ASSERT_HASH_EQ(get_block_hash(this->m_blocks[1]), hashes[1]);
+  ASSERT_HASH_EQ(get_block_hash(this->m_blocks[0].first), hashes[0]);
+  ASSERT_HASH_EQ(get_block_hash(this->m_blocks[1].first), hashes[1]);
 }
 
 }  // anonymous namespace

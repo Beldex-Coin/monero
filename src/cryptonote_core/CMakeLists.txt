@@ -27,49 +27,38 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-set(cryptonote_core_sources
+add_library(cryptonote_core
   blockchain.cpp
   cryptonote_core.cpp
   master_node_rules.cpp
   master_node_list.cpp
-  master_node_deregister.cpp
+  master_node_voting.cpp
   master_node_quorum_cop.cpp
+  master_node_swarm.cpp
+  tx_blink.cpp
+  beldex_name_system.cpp
   tx_pool.cpp
-  cryptonote_tx_utils.cpp)
+  tx_sanity_check.cpp
+  cryptonote_tx_utils.cpp
+  pulse.cpp)
 
-set(cryptonote_core_headers)
-
-set(cryptonote_core_private_headers
-  blockchain_storage_boost_serialization.h
-  blockchain.h
-  master_node_rules.h
-  master_node_list.h
-  master_node_quorum_cop.h
-  cryptonote_core.h
-  master_node_deregister.h
-  tx_pool.h
-  cryptonote_tx_utils.h)
-
-beldex_private_headers(cryptonote_core
-  ${cryptonote_core_private_headers})
-beldex_add_library(cryptonote_core
-  ${cryptonote_core_sources}
-  ${cryptonote_core_headers}
-  ${cryptonote_core_private_headers})
 target_link_libraries(cryptonote_core
   PUBLIC
     version
     common
-    cncrypto
     blockchain_db
     multisig
     ringct
     device
-    ${Boost_DATE_TIME_LIBRARY}
-    ${Boost_PROGRAM_OPTIONS_LIBRARY}
-    ${Boost_SERIALIZATION_LIBRARY}
-    ${Boost_FILESYSTEM_LIBRARY}
-    ${Boost_SYSTEM_LIBRARY}
-    ${Boost_THREAD_LIBRARY}
+    checkpoints
+    sqlite3
   PRIVATE
-    ${EXTRA_LIBRARIES})
+    Boost::program_options
+    systemd
+    extra)
+
+if(PER_BLOCK_CHECKPOINT)
+  target_compile_definitions(cryptonote_core PUBLIC PER_BLOCK_CHECKPOINT)
+  target_link_libraries(cryptonote_core PUBLIC blocks)
+endif()
+

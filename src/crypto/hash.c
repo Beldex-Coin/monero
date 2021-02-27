@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -32,6 +32,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "epee/int-util.h"
 #include "hash-ops.h"
 #include "keccak.h"
 

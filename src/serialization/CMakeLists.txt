@@ -27,29 +27,4 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-set(serialization_sources
-  json_object.cpp)
-
-set(serialization_headers)
-
-set(serialization_private_headers
-  json_object.h)
-
-beldex_private_headers(serialization
-  ${serialization_private_headers})
-beldex_add_library(serialization
-  ${serialization_sources}
-  ${serialization_headers}
-  ${serialization_private_headers})
-target_link_libraries(serialization
-  LINK_PRIVATE
-    cryptonote_core
-    cryptonote_protocol
-    ${Boost_CHRONO_LIBRARY}
-    ${Boost_REGEX_LIBRARY}
-    ${Boost_SYSTEM_LIBRARY}
-    ${Boost_THREAD_LIBRARY}
-    ${EXTRA_LIBRARIES})
-add_dependencies(serialization
-  version)
-
+# Nothing to do here: serialization code is completely header-only.

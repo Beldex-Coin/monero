@@ -32,13 +32,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include "epee/misc_log_ex.h"
 #include "crypto/hash.h"
 #include "cryptonote_basic/difficulty.h"
 
-using namespace std;
 using cryptonote::check_hash;
 
 int main(int argc, char *argv[]) {
+  TRY_ENTRY();
   crypto::hash h;
   for (uint64_t diff = 1;; diff += 1 + (diff >> 8)) {
     for (uint16_t b = 0; b < 256; b++) {
@@ -54,7 +55,7 @@ int main(int argc, char *argv[]) {
         }
       }
     }
-    if (diff < numeric_limits<uint64_t>::max() / 256) {
+    if (diff < std::numeric_limits<uint64_t>::max() / 256) {
       uint64_t val = 0;
       for (int i = 31; i >= 0; i--) {
         val = val * 256 + 255;
@@ -83,4 +84,5 @@ int main(int argc, char *argv[]) {
     }
   }
   return 0;
+  CATCH_ENTRY_L0("main", 1);
 }

@@ -35,13 +35,13 @@ typedef enum
   SKEIN_FAIL            =      1,
   SKEIN_BAD_HASHLEN     =      2
 }
-HashReturn;
+SkeinHashReturn;
 
 typedef size_t   DataLength;                /* bit count  type */
 typedef u08b_t   BitSequence;               /* bit stream type */
 
 /* "all-in-one" call */
-HashReturn skein_hash(int hashbitlen,   const BitSequence *data, 
+SkeinHashReturn skein_hash(int hashbitlen,   const BitSequence *data, 
                       DataLength databitlen,  BitSequence *hashval);
 
 #endif  /* ifndef _SKEIN_H_ */

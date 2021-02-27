@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -36,122 +36,103 @@
  */
 #pragma once
 
-#include <boost/variant/variant.hpp>
-#include <boost/variant/apply_visitor.hpp>
-#include <boost/variant/static_visitor.hpp>
-#include <boost/mpl/empty.hpp>
-#include <boost/mpl/if.hpp>
-#include <boost/mpl/front.hpp>
-#include <boost/mpl/pop_front.hpp>
+#include <oxenmq/variant.h>
 #include "serialization.h"
+#include "common/meta.h"
 
-/*! \struct variant_serialization_triats
- * 
- * \brief used internally to contain a variant's traits/possible types
+namespace serialization {
+
+// Helper bool to annotate what went wrong.
+template <typename T, typename Tag>
+constexpr bool VARIANT_NOT_REGISTERED = false;
+
+// Fallback function; this is only instantiated (and fails to compile) if no specialization (create
+// with one of the VARIANT_TAG macros) is defined at the point of instantiation.  This `is_same_v`
+// is meant to convey some type information via the compiler (which usually expands the types that
+// caused the static assert condition to fail).
+template <typename T, typename TagType>
+constexpr TagType variant_not_registered() {
+  static_assert(VARIANT_NOT_REGISTERED<T, TagType>, "Variant type was not registered with the appropriate VARIANT_TAG, BINARY_VARIANT_TAG, or JSON_VARIANT_TAG");
+}
+
+/*! variant_serialization_tag is a constexpr template variable holds a variant type and tag.
  *
- * \detailed see the macro VARIANT_TAG in serialization.h:140
+ * The base case is not usable; it must be specialized, typically using the VARIANT_TAG macro.
  */
-template <class Archive, class T>
-struct variant_serialization_traits
-{
-};
+template <class T, class TagType>
+constexpr auto variant_serialization_tag = variant_not_registered<T, TagType>();
 
-/*! \struct variant_reader
+/*! \macro BINARY_VARIANT_TAG
  *
- * \brief reads a variant
+ * \brief Registers a uint8_t variant tag for binary variant serialization
  */
-template <class Archive, class Variant, class TBegin, class TEnd>
-struct variant_reader
+#define BINARY_VARIANT_TAG(Type, BinaryTag) \
+namespace serialization { template<> inline constexpr uint8_t variant_serialization_tag<Type, uint8_t>{BinaryTag}; }
+
+/*! \macro JSON_VARIANT_TAG
+ *
+ * \brief Registers a string_view variant tag for json variant serialization
+ */
+#define JSON_VARIANT_TAG(Type, JSONTag) \
+namespace serialization { template<> inline constexpr std::string_view variant_serialization_tag<Type, std::string_view>{JSONTag}; }
+
+/*! \macro VARIANT_TAG
+ *
+ * \brief Registers a variant type using the given json (string view) and binary (uint8_t) tags
+ */
+#define VARIANT_TAG(Type, JSONTag, BinaryTag) \
+  JSON_VARIANT_TAG(Type, JSONTag) \
+  BINARY_VARIANT_TAG(Type, BinaryTag)
+
+namespace detail {
+
+template <size_t I, class Archive, typename Variant, typename Tag>
+bool read_variant_impl_one(Archive& ar, Variant& v, const Tag& tag)
 {
-  typedef typename Archive::variant_tag_type variant_tag_type;
-  typedef typename boost::mpl::next<TBegin>::type TNext;
-  typedef typename boost::mpl::deref<TBegin>::type current_type;
-
-  // A tail recursive inline function.... okay...
-  static inline bool read(Archive &ar, Variant &v, variant_tag_type t)
-  {
-    if(variant_serialization_traits<Archive, current_type>::get_tag() == t) {
-      current_type x;
-      if(!::do_serialize(ar, x))
-      {
-        ar.stream().setstate(std::ios::failbit);
-        return false;
-      }
-      v = x;
-    } else {
-      // Tail recursive.... but no mutation is going on. Why?
-      return variant_reader<Archive, Variant, TNext, TEnd>::read(ar, v, t);
-    }
-    return true;
-  }
-};
-
-// This one just fails when you call it.... okay
-// So the TEnd parameter must be specified/different from TBegin
-template <class Archive, class Variant, class TBegin>
-struct variant_reader<Archive, Variant, TBegin, TBegin>
-{
-  typedef typename Archive::variant_tag_type variant_tag_type;
-
-  static inline bool read(Archive &ar, Variant &v, variant_tag_type t)
-  {
-    ar.stream().setstate(std::ios::failbit);
+  if (tag != variant_serialization_tag<std::variant_alternative_t<I, Variant>, Tag>)
     return false;
-  }
-};
+  value(ar, v.template emplace<I>());
+  return true;
+}
 
-
-template <template <bool> class Archive, BOOST_VARIANT_ENUM_PARAMS(typename T)>
-struct serializer<Archive<false>, boost::variant<BOOST_VARIANT_ENUM_PARAMS(T)>>
+template <class Archive, typename... T, size_t... I>
+void read_variant_impl(Archive& ar, std::variant<T...>& v, std::index_sequence<I...>)
 {
-  typedef boost::variant<BOOST_VARIANT_ENUM_PARAMS(T)> variant_type;
-  typedef typename Archive<false>::variant_tag_type variant_tag_type;
-  typedef typename variant_type::types types;
+  typename Archive::variant_tag_type tag;
+  auto obj = ar.begin_object();
+  ar.read_variant_tag(tag);
+  if (!(... || read_variant_impl_one<I>(ar, v, tag)))
+    throw std::runtime_error("failed to read variant");
+}
 
-  static bool serialize(Archive<false> &ar, variant_type &v) {
-    variant_tag_type t;
-    ar.begin_variant();
-    ar.read_variant_tag(t);
-    if(!variant_reader<Archive<false>, variant_type,
-       typename boost::mpl::begin<types>::type,
-       typename boost::mpl::end<types>::type>::read(ar, v, t))
-    {
-      ar.stream().setstate(std::ios::failbit);
-      return false;
-    }
-    ar.end_variant();
-    return true;
-  }
-};
-
-template <template <bool> class Archive, BOOST_VARIANT_ENUM_PARAMS(typename T)>
-struct serializer<Archive<true>, boost::variant<BOOST_VARIANT_ENUM_PARAMS(T)>>
+template <class Archive, typename... T, typename Indices = std::make_index_sequence<sizeof...(T)>>
+void read_variant(Archive& ar, std::variant<T...>& v)
 {
-  typedef boost::variant<BOOST_VARIANT_ENUM_PARAMS(T)> variant_type;
-  //typedef typename Archive<true>::variant_tag_type variant_tag_type;
+  read_variant_impl(ar, v, std::make_index_sequence<sizeof...(T)>{});
+}
 
-  struct visitor : public boost::static_visitor<bool>
-  {
-    Archive<true> &ar;
+/// Writes a variant
+template <class Archive, typename... T>
+void write_variant(Archive& ar, std::variant<T...>& v)
+{
+  return var::visit([&ar](auto& rv) {
+      using Type = std::decay_t<decltype(rv)>;
+      auto obj = ar.begin_object();
+      ar.write_variant_tag(variant_serialization_tag<Type, typename Archive::variant_tag_type>);
+      value(ar, rv);
+  }, v);
+}
 
-    visitor(Archive<true> &a) : ar(a) { }
+} // namespace detail
 
-    template <class T>
-    bool operator ()(T &rv) const
-    {
-      ar.begin_variant();
-      ar.write_variant_tag(variant_serialization_traits<Archive<true>, T>::get_tag());
-      if(!::do_serialize(ar, rv))
-      {
-        ar.stream().setstate(std::ios::failbit);
-        return false;
-      }
-      ar.end_variant();
-      return true;
-    }
-  };
 
-  static bool serialize(Archive<true> &ar, variant_type &v) {
-    return boost::apply_visitor(visitor(ar), v);
-  }
-};
+template <typename Archive, typename... T>
+void serialize_value(Archive& ar, std::variant<T...>& v)
+{
+  if constexpr (Archive::is_serializer)
+    return detail::write_variant(ar, v);
+  else
+    return detail::read_variant(ar, v);
+}
+
+} // namespace serialization

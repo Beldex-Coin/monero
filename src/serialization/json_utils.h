@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -35,13 +35,26 @@
 
 namespace serialization {
 
-template<class T>
-std::string dump_json(T &v)
-{
-  std::stringstream ostr;
-  json_archive<true> oar(ostr);
-  assert(serialization::serialize(oar, v));
-  return ostr.str();
+/// Subclass of json_archiver that writes to a std::ostringstream and returns the string on
+/// demand.
+class json_string_archiver : public json_archiver {
+  std::ostringstream oss;
+public:
+  /// Constructor; takes no arguments.
+  json_string_archiver() : json_archiver{oss} {}
+
+  /// Returns the string from the std::ostringstream
+  std::string str() { return oss.str(); }
 };
+
+/*! serializes the data in v to a string.  Throws on error.
+*/
+template<class T>
+std::string dump_json(T& v)
+{
+  json_string_archiver oar;
+  serialize(oar, v);
+  return oar.str();
+}
 
 } // namespace serialization

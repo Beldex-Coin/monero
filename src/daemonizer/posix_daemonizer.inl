@@ -30,23 +30,16 @@
 #pragma once
 
 #include "common/scoped_message_writer.h"
-#include "common/util.h"
-#include "daemonizer/posix_fork.h"
-
-#include <boost/filesystem/operations.hpp>
-#include <boost/filesystem/path.hpp>
+#include "common/file.h"
+#include "common/command_line.h"
 
 namespace daemonizer
 {
   namespace
   {
     const command_line::arg_descriptor<bool> arg_detach = {
-      "detach"
-    , "Run as daemon"
-    };
-    const command_line::arg_descriptor<std::string> arg_pidfile = {
-      "pidfile"
-    , "File path to write the daemon's PID to (optional, requires --detach)"
+      "detach" // deprecated, but still here to print an error msg if you try to use it
+    , ""
     };
     const command_line::arg_descriptor<bool> arg_non_interactive = {
       "non-interactive"
@@ -59,30 +52,29 @@ namespace daemonizer
     , boost::program_options::options_description & normal_options
     )
   {
-    command_line::add_arg(normal_options, arg_detach);
-    command_line::add_arg(normal_options, arg_pidfile);
+    command_line::add_arg(hidden_options, arg_detach);
     command_line::add_arg(normal_options, arg_non_interactive);
   }
 
-  inline boost::filesystem::path get_default_data_dir()
+  inline fs::path get_default_data_dir()
   {
-    return boost::filesystem::absolute(tools::get_default_data_dir());
+    return fs::absolute(tools::get_default_data_dir());
   }
 
-  inline boost::filesystem::path get_relative_path_base(
+  inline fs::path get_relative_path_base(
       boost::program_options::variables_map const & vm
     )
   {
-    return boost::filesystem::current_path();
+    return fs::current_path();
   }
 
-  template <typename T_executor>
-  inline bool daemonize(
-      int argc, char const * argv[]
-    , T_executor && executor // universal ref
-    , boost::program_options::variables_map const & vm
-    )
+  template <typename Application, typename... Args>
+  bool daemonize(
+      const char* name, int argc, const char* argv[],
+      boost::program_options::variables_map vm,
+      Args&&... args)
   {
+    (void)name; (void)argc; (void)argv; // Only used for Windows
     if (command_line::has_arg(vm, arg_detach))
     {
       tools::success_msg_writer() << "Forking to background...";
@@ -104,5 +96,7 @@ namespace daemonizer
       //LOG_PRINT_L0("Beldex '" << BELDEX_RELEASE_NAME << "' (v" << BELDEX_VERSION_FULL);
       return executor.run_interactive(vm);
     }
+    bool interactive = !command_line::has_arg(vm, arg_non_interactive);
+    return Application{std::move(vm), std::forward<Args>(args)...}.run(interactive);
   }
 }

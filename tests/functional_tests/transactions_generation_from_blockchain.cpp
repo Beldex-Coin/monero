@@ -28,8 +28,6 @@
 // 
 // Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
-#include "include_base_utils.h"
-using namespace epee;
 #include "wallet/wallet2.h"
 
 using namespace cryptonote;
@@ -52,7 +50,7 @@ tx_source_entry::output_entry make_outptu_entr_for_gindex(size_t i, std::map<cry
 {
   tx_source_entry::output_entry oe;
   oe = i;
-  oe.second = txs[v[i].first].boost::get<txout_to_key>(vout[v[i].second].target).key;
+  oe.second = txs[v[i].first].var::get<txout_to_key>(vout[v[i].second].target).key;
   return oe;
 }
 
@@ -77,7 +75,7 @@ bool make_tx(blockchain_storage& bch)
   sources[0].outputs.push_back(make_outptu_entr_for_gindex(34, txs, v));
   sources[0].real_out_tx_key =
 
-  BOOST_FOREACH(transfer_container::iterator it, selected_transfers)
+  for (auto& it : selected_transfers)
   {
     sources.resize(sources.size()+1);
     cryptonote::tx_source_entry& src = sources.back();
@@ -87,7 +85,7 @@ bool make_tx(blockchain_storage& bch)
     if(daemon_resp.outs.size())
     {
       daemon_resp.outs[i].outs.sort([](const out_entry& a, const out_entry& b){return a.global_amount_index < b.global_amount_index;});
-      BOOST_FOREACH(out_entry& daemon_oe, daemon_resp.outs[i].outs)
+      for (out_entry& daemon_oe : daemon_resp.outs[i].outs)
       {
         if(td.m_global_output_index == daemon_oe.global_amount_index)
           continue;
@@ -108,7 +106,7 @@ bool make_tx(blockchain_storage& bch)
     //size_t real_index = src.outputs.size() ? (rand() % src.outputs.size() ):0;
     tx_output_entry real_oe;
     real_oe.first = td.m_global_output_index;
-    real_oe.second = boost::get<txout_to_key>(td.m_tx.vout[td.m_internal_output_index].target).key;
+    real_oe.second = var::get<txout_to_key>(td.m_tx.vout[td.m_internal_output_index].target).key;
     auto interted_it = src.outputs.insert(it_to_insert, real_oe);
     src.real_out_tx_key = td.m_tx.tx_pub_key;
     src.real_output = interted_it - src.outputs.begin();
@@ -135,19 +133,19 @@ bool make_tx(blockchain_storage& bch)
     std::cout << "transaction construction failed" << std::endl;
   }
 
-  COMMAND_RPC_SEND_RAW_TX::request req;
-  req.tx_as_hex = epee::string_tools::buff_to_hex_nodelimer(tx_to_blob(tx));
-  COMMAND_RPC_SEND_RAW_TX::response daemon_send_resp;
+  rpc::SEND_RAW_TX::request req;
+  req.tx_as_hex = oxenmq::to_hex(tx_to_blob(tx));
+  rpc::SEND_RAW_TX::response daemon_send_resp;
   r = net_utils::http::invoke_http_json_remote_command(m_daemon_address + "/sendrawtransaction", req, daemon_send_resp, m_http_client);
   CHECK_AND_ASSERT_MES(r, false, "failed to send transaction");
-  if(daemon_send_resp.status != CORE_RPC_STATUS_OK)
+  if(daemon_send_resp.status != rpc::STATUS_OK)
   {
-    std::cout << "daemon failed to accept generated transaction" << ENDL;
+    std::cout << "daemon failed to accept generated transaction" << std::endl;
     return false;
   }
 
   std::cout << "transaction generated ok and sent to daemon" << std::endl;
-  BOOST_FOREACH(transfer_container::iterator it, selected_transfers)
+  for (auto &it : selected_transfers)
     it->m_spent = true;
 
   return true;

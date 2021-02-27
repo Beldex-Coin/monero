@@ -33,9 +33,7 @@
 #include "wallet/wallet.h"
 #include "rpc/core_rpc_server.h"
 #include "cryptonote_basic/account.h"
-#include "net/http_client_abstract_invoke.h"
-using namespace std;
-using namespace epee::misc_utils;
+#include "epee/net/http_client_abstract_invoke.h"
 using namespace cryptonote;
 
 string daemon_address = "http://localhost:23400";
@@ -68,10 +66,10 @@ TEST(Transfers, Transfers)
   receiver.store("receiver.b2wallet");
 
   {
-    COMMAND_RPC_START_MINE::request req;
+    rpc::START_MINE::request req;
     req.miner_address = miner.get_account().get_public_address_str(false);
     req.threads_count = 1;
-    COMMAND_RPC_START_MINE::response res;
+    rpc::START_MINE::response res;
     bool r = net_utils::http::invoke_http_json_remote_command(daemon_address + "/start_mine", req, res, http_client);
     ASSERT_TRUE(r);
   }

@@ -35,13 +35,18 @@
 #include <string>
 #include <cfenv>
 
+#include "epee/misc_log_ex.h"
+#include "epee/warnings.h"
 #include "crypto/hash.h"
 #include "crypto/variant2_int_sqrt.h"
+#include "cryptonote_core/cryptonote_tx_utils.h"
 #include "../io.h"
 
-using namespace std;
 using namespace crypto;
 typedef crypto::hash chash;
+
+using std::cerr;
+using std::endl;
 
 #define X_MACRO \
     HASH_X_MACRO(invalid,         "INVALID") \
@@ -66,8 +71,10 @@ int test_variant2_int_sqrt();
 int test_variant2_int_sqrt_ref();
 
 int main(int argc, char *argv[]) {
-  fstream input;
-  vector<char> data;
+  TRY_ENTRY();
+
+  std::fstream input;
+  std::vector<char> data;
   chash expected, actual;
   size_t test = 0;
   bool error = false;
@@ -122,15 +129,15 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  input.open(argv[2], ios_base::in);
+  input.open(argv[2], std::ios_base::in);
   for (;;) {
     ++test;
-    input.exceptions(ios_base::badbit);
+    input.exceptions(std::ios_base::badbit);
     get(input, expected);
-    if (input.rdstate() & ios_base::eofbit) {
+    if (input.rdstate() & std::ios_base::eofbit) {
       break;
     }
-    input.exceptions(ios_base::badbit | ios_base::failbit | ios_base::eofbit);
+    input.exceptions(std::ios_base::badbit | std::ios_base::failbit | std::ios_base::eofbit);
     input.clear(input.rdstate());
     get(input, data);
 
@@ -143,7 +150,7 @@ int main(int argc, char *argv[]) {
       case hash_type::tree:
       {
         if ((len & 31) != 0)
-          throw ios_base::failure("Invalid input length for tree_hash");
+          throw std::ios_base::failure("Invalid input length for tree_hash");
         tree_hash((const char (*)[crypto::HASH_SIZE]) buf, len >> 5, actual_byte_ptr);
       }
       break;
@@ -168,22 +175,23 @@ int main(int argc, char *argv[]) {
         cerr << "empty";
       } else {
         for (i = 0; i < data.size(); i++) {
-          cerr << setbase(16) << setw(2) << setfill('0') << int(static_cast<unsigned char>(data[i]));
+          cerr << std::setbase(16) << std::setw(2) << std::setfill('0') << int(static_cast<unsigned char>(data[i]));
         }
       }
       cerr << endl << "Expected hash: ";
       for (i = 0; i < 32; i++) {
-          cerr << setbase(16) << setw(2) << setfill('0') << int(reinterpret_cast<unsigned char *>(&expected)[i]);
+          cerr << std::setbase(16) << std::setw(2) << std::setfill('0') << int(reinterpret_cast<unsigned char *>(&expected)[i]);
       }
       cerr << endl << "Actual hash: ";
       for (i = 0; i < 32; i++) {
-          cerr << setbase(16) << setw(2) << setfill('0') << int(reinterpret_cast<unsigned char *>(&actual)[i]);
+          cerr << std::setbase(16) << std::setw(2) << std::setfill('0') << int(reinterpret_cast<unsigned char *>(&actual)[i]);
       }
       cerr << endl;
       error = true;
     }
   }
   return error ? 1 : 0;
+  CATCH_ENTRY_L0("main", 1);
 }
 
 #if defined(__x86_64__) || (defined(_MSC_VER) && defined(_WIN64))

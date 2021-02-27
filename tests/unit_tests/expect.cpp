@@ -28,13 +28,14 @@
 
 #include <gtest/gtest.h>
 
-#include <boost/algorithm/string/predicate.hpp>
-#include <boost/utility/string_ref.hpp>
+#include <string_view>
 #include <string>
 #include <system_error>
 #include <type_traits>
 
 #include "common/expect.h"
+
+using namespace std::literals;
 
 namespace
 {
@@ -335,10 +336,10 @@ TEST(Expect, Assignment)
     EXPECT_TRUE(!val2.has_error());
     EXPECT_EQ(val1.value(), std::string{});
     EXPECT_TRUE(*val1 == std::string{});
-    EXPECT_TRUE(boost::equals(val1->c_str(), ""));
+    EXPECT_TRUE(val1->c_str() == ""sv);
     EXPECT_TRUE(val2.value() == "foobar");
     EXPECT_TRUE(*val2 == "foobar");
-    EXPECT_TRUE(boost::equals(val2->c_str(), "foobar"));
+    EXPECT_TRUE(val2->c_str() == "foobar"sv);
     EXPECT_EQ(val1.error(), std::error_code{});
     EXPECT_EQ(val2.error(), std::error_code{});
     EXPECT_TRUE(!val1.equal(std::error_code{}));
@@ -364,10 +365,10 @@ TEST(Expect, Assignment)
     EXPECT_TRUE(!val2.has_error());
     EXPECT_EQ(val1.value(), "foobar");
     EXPECT_TRUE(*val1 == "foobar");
-    EXPECT_TRUE(boost::equals(val1->c_str(), "foobar"));
+    EXPECT_TRUE(val1->c_str() == "foobar"sv);
     EXPECT_EQ(val2.value(), std::string{});
     EXPECT_TRUE(*val2 == std::string{});
-    EXPECT_TRUE(boost::equals(val2->c_str(), ""));
+    EXPECT_TRUE(val2->c_str() == ""sv);
     EXPECT_EQ(val1.error(), std::error_code{});
     EXPECT_EQ(val2.error(), std::error_code{});
     EXPECT_TRUE(!val1.equal(std::error_code{}));
@@ -393,10 +394,10 @@ TEST(Expect, Assignment)
     EXPECT_TRUE(!val2.has_error());
     EXPECT_EQ(val1.value(), "foobar");
     EXPECT_TRUE(*val1 == "foobar");
-    EXPECT_TRUE(boost::equals(val1->c_str(), "foobar"));
+    EXPECT_TRUE(val1->c_str() == "foobar"sv);
     EXPECT_EQ(val2.value(), "foobar");
     EXPECT_TRUE(*val2 == "foobar");
-    EXPECT_TRUE(boost::equals(val2->c_str(), "foobar"));
+    EXPECT_TRUE(val2->c_str() == "foobar"sv);
     EXPECT_EQ(val1.error(), std::error_code{});
     EXPECT_EQ(val2.error(), std::error_code{});
     EXPECT_TRUE(!val1.equal(std::error_code{}));
@@ -425,7 +426,7 @@ TEST(Expect, Assignment)
     EXPECT_TRUE(common_error::kInvalidArgument == val1);
     EXPECT_STREQ(val2.value().c_str(), "foobar");
     EXPECT_TRUE(*val2 == "foobar");
-    EXPECT_TRUE(boost::equals(val2->c_str(), "foobar"));
+    EXPECT_TRUE(val2->c_str() == "foobar"sv);
     EXPECT_NE(val1.error(), std::error_code{});
     EXPECT_EQ(val2.error(), std::error_code{});
     EXPECT_TRUE(val1.equal(common_error::kInvalidArgument));
@@ -483,7 +484,7 @@ TEST(Expect, Assignment)
     EXPECT_TRUE(!val2.has_value());
     EXPECT_STREQ(val1.value().c_str(), "barfoo");
     EXPECT_TRUE(*val1 == "barfoo");
-    EXPECT_TRUE(boost::equals(val1->c_str(), "barfoo"));
+    EXPECT_TRUE(val1->c_str() == "barfoo"sv);
     EXPECT_EQ(val2.error(), common_error::kInvalidArgument);
     EXPECT_TRUE(val2 == common_error::kInvalidArgument);
     EXPECT_TRUE(common_error::kInvalidArgument == val2);
@@ -513,10 +514,10 @@ TEST(Expect, Assignment)
     EXPECT_TRUE(!val2.has_error());
     EXPECT_EQ(val1.value(), "barfoo");
     EXPECT_TRUE(*val1 == "barfoo");
-    EXPECT_TRUE(boost::equals(val1->c_str(), "barfoo"));
+    EXPECT_TRUE(val1->c_str() == "barfoo"sv);
     EXPECT_EQ(val2.value(), "barfoo");
     EXPECT_TRUE(*val2 == "barfoo");
-    EXPECT_TRUE(boost::equals(val2->c_str(), "barfoo"));
+    EXPECT_TRUE(val2->c_str() == "barfoo"sv);
     EXPECT_EQ(val1.error(), std::error_code{});
     EXPECT_EQ(val2.error(), std::error_code{});
     EXPECT_TRUE(!val1.equal(std::error_code{}));
@@ -595,7 +596,7 @@ TEST(Expect, EqualWithStrings)
 {
     expect<std::string> val1{std::string{}};
     expect<std::string> val2{"barfoo"};
-    expect<boost::string_ref> val3{boost::string_ref{}};
+    expect<std::string_view> val3{std::string_view{}};
 
     EXPECT_TRUE(!val1.equal(val2));
     EXPECT_TRUE(val1.equal(val3));

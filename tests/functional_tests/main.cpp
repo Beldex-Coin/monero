@@ -30,9 +30,7 @@
 
 #include <boost/program_options.hpp>
 
-#include "include_base_utils.h"
-#include "string_tools.h"
-using namespace epee;
+#include "epee/string_tools.h"
 
 #include "common/command_line.h"
 #include "common/util.h"
@@ -61,7 +59,7 @@ int main(int argc, char* argv[])
 {
   TRY_ENTRY();
   tools::on_startup();
-  string_tools::set_module_name_and_folder(argv[0]);
+  epee::string_tools::set_module_name_and_folder(argv[0]);
 
   //set up logging options
   mlog_configure(mlog_get_default_log_path("functional_tests.log"), true);

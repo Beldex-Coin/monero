@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2018, The Monero Project
+// Copyright (c) 2017-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -28,7 +28,7 @@
 //
 #if defined(HAVE_HIDAPI) 
 
-#include <boost/scope_exit.hpp>
+#include "common/beldex.h"
 #include "log.hpp"
 #include "device_io_hid.hpp"
 
@@ -44,7 +44,20 @@ namespace hw {
     
     static std::string safe_hid_error(hid_device *hwdev) {
       if (hwdev) {
-        return  std::string((char*)hid_error(hwdev));
+        const wchar_t* error_wstr = hid_error(hwdev);
+        if (error_wstr == nullptr)
+        {
+          return "Unknown error";
+        }
+        std::mbstate_t state{};
+        const size_t len_symbols = std::wcsrtombs(nullptr, &error_wstr, 0, &state);
+        if (len_symbols == static_cast<std::size_t>(-1))
+        {
+          return "Failed to convert wide char error";
+        }
+        std::string error_str(len_symbols + 1, 0);
+        std::wcsrtombs(&error_str[0], &error_wstr, error_str.size(), &state);
+        return error_str;
       }
       return std::string("NULL device");
     }
@@ -63,18 +76,15 @@ namespace hw {
       timeout(to),
       usb_vid(0),
       usb_pid(0),
-      usb_device(NULL) {
+      usb_device(nullptr) {
     }
 
     device_io_hid::device_io_hid() : device_io_hid(DEFAULT_CHANNEL, DEFAULT_TAG, DEFAULT_PACKET_SIZE, DEFAULT_TIMEOUT) {
     }
 
     void device_io_hid::io_hid_log(int read, unsigned char* buffer, int block_len) {
-      if (hid_verbose) {
-        char  strbuffer[1024];
-        hw::buffer_to_str(strbuffer, sizeof(strbuffer), (char*)buffer, block_len);
-        MDEBUG( "HID " << (read?"<":">") <<" : "<<strbuffer);
-      }
+      if (hid_verbose)
+        MDEBUG("HID " << (read ? '<' : '>') << " : " << oxenmq::to_hex(buffer, buffer + block_len));
     }
  
     void device_io_hid::init() {
@@ -85,28 +95,38 @@ namespace hw {
 
     void device_io_hid::connect(void *params) {
       hid_conn_params *p = (struct hid_conn_params*)params;
-      this->connect(p->vid, p->pid, p->interface_number, p->usage_page);
+      if (!this->connect(p->vid, p->pid, p->interface_number, p->usage_page)) {
+        ASSERT_X(false, "No device found. (Is the device running with the wallet app opened?)");
+      }
     }
 
-    hid_device_info *device_io_hid::find_device(hid_device_info *devices_list, boost::optional<int> interface_number, boost::optional<unsigned short> usage_page) {
+    void device_io_hid::connect(const std::vector<hid_conn_params> &hcpV) {
+      for (auto p: hcpV) {
+        if (this->connect(p.vid, p.pid, p.interface_number, p.usage_page)) {
+          return;
+        }        
+      }
+      ASSERT_X(false, "No device found. (Is the device running with the wallet app opened?)");
+    }
+
+    hid_device_info *device_io_hid::find_device(hid_device_info *devices_list, std::optional<int> interface_number, std::optional<unsigned short> usage_page) {
       bool select_any = !interface_number && !usage_page;
 
       MDEBUG( "Looking for " <<
               (select_any ? "any HID Device" : "HID Device with") <<
-              (interface_number ? (" interface_number " + std::to_string(interface_number.value())) : "") <<
+              (interface_number ? (" interface_number " + std::to_string(*interface_number)) : "") <<
               ((interface_number && usage_page) ? " or" : "") <<
-              (usage_page ? (" usage_page " + std::to_string(usage_page.value())) : ""));
+              (usage_page ? (" usage_page " + std::to_string(*usage_page)) : ""));
 
       hid_device_info *result = nullptr;
       for (; devices_list != nullptr; devices_list = devices_list->next) {
-        BOOST_SCOPE_EXIT(&devices_list, &result) {
+      BELDEX_DEFER {
           MDEBUG( (result == devices_list ? "SELECTED" : "SKIPPED ") <<
                   " HID Device" <<
                   " path " << safe_hid_path(devices_list) <<
                   " interface_number " << devices_list->interface_number <<
                   " usage_page " << devices_list->usage_page);
-        }
-        BOOST_SCOPE_EXIT_END
+        };
 
         if (result != nullptr) {
           continue;
@@ -114,9 +134,9 @@ namespace hw {
 
         if (select_any) {
           result = devices_list;
-        } else if (interface_number && devices_list->interface_number == interface_number.value()) {
+        } else if (interface_number && devices_list->interface_number == *interface_number) {
           result = devices_list;
-        } else if (usage_page && devices_list->usage_page == usage_page.value()) {
+        } else if (usage_page && devices_list->usage_page == *usage_page) {
           result = devices_list;
         }
       }
@@ -124,15 +144,18 @@ namespace hw {
       return result;
     }
 
-    void device_io_hid::connect(unsigned int vid, unsigned  int pid, boost::optional<int> interface_number, boost::optional<unsigned short> usage_page) {
+    hid_device  *device_io_hid::connect(unsigned int vid, unsigned  int pid, std::optional<int> interface_number, std::optional<unsigned short> usage_page) {
       hid_device_info *hwdev_info_list;
       hid_device      *hwdev;
 
       this->disconnect();
 
       hwdev_info_list = hid_enumerate(vid, pid);
-      ASSERT_X(hwdev_info_list, "Unable to enumerate device "+std::to_string(vid)+":"+std::to_string(vid)+  ": "+ safe_hid_error(this->usb_device));
-      hwdev = NULL;
+      if (!hwdev_info_list) {
+        MDEBUG("Unable to enumerate device "+std::to_string(vid)+":"+std::to_string(vid)+  ": "+ safe_hid_error(this->usb_device));
+        return nullptr;
+      }
+      hwdev = nullptr;
       if (hid_device_info *device = find_device(hwdev_info_list, interface_number, usage_page)) {
         hwdev = hid_open_path(device->path);
       }
@@ -141,11 +164,12 @@ namespace hw {
       this->usb_vid = vid;
       this->usb_pid = pid;
       this->usb_device = hwdev;
+      return hwdev;
     }
 
 
     bool device_io_hid::connected() const {
-      return this->usb_device != NULL;
+      return this->usb_device != nullptr;
     }
 
     int device_io_hid::exchange(unsigned char *command, unsigned int cmd_len, unsigned char *response, unsigned int max_resp_len, bool user_input)  {
@@ -207,7 +231,7 @@ namespace hw {
       }
       this->usb_vid = 0;
       this->usb_pid = 0;
-      this->usb_device = NULL;
+      this->usb_device = nullptr;
     }
 
     void device_io_hid::release()  {
@@ -276,7 +300,7 @@ namespace hw {
       unsigned int val;
 
       //end?
-      if ((data == NULL) || (data_len < 7 + 5)) { 
+      if ((data == nullptr) || (data_len < 7 + 5)) { 
         return 0;
       }
 

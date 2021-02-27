@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -29,7 +29,7 @@
 #ifndef __tables_h
 #define __tables_h
 
-#include "int-util.h"
+#include "epee/int-util.h"
 
 
 #if BYTE_ORDER == LITTLE_ENDIAN

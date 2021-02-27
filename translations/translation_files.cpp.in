@@ -1,0 +1,17 @@
+#include <string>
+#include <unordered_map>
+
+using namespace std::literals;
+
+static std::unordered_map<std::string, std::string> _translation_files{
+@TRANSLATION_FILES@
+};
+
+bool find_embedded_file(const std::string &name, std::string &data) {
+  auto it = _translation_files.find(name);
+  if (it != _translation_files.end()) {
+    data = it->second;
+    return true;
+  }
+  return false;
+}

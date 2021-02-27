@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -30,15 +30,12 @@
 
 #pragma once
 
-#include <stddef.h>
-#include <iostream>
-#include <boost/utility/value_init.hpp>
+#include <cstddef>
+#include <ostream>
 
-#include "common/pod-class.h"
 #include "generic-ops.h"
-#include "hex.h"
-#include "span.h"
-#include <boost/align/aligned_alloc.hpp>
+#include "common/hex.h"
+#include "crypto/cn_heavy_hash.hpp"
 
 namespace crypto {
 
@@ -46,14 +43,14 @@ namespace crypto {
 #include "hash-ops.h"
   }
 
-#pragma pack(push, 1)
-  POD_CLASS hash {
+  struct alignas(size_t) hash {
     char data[HASH_SIZE];
+    static constexpr hash null() { return {0}; }
+    operator bool() const { return memcmp(data, null().data, sizeof(data)); }
   };
-  POD_CLASS hash8 {
+  struct hash8 {
     char data[8];
   };
-#pragma pack(pop)
 
   static_assert(sizeof(hash) == HASH_SIZE, "Invalid structure size");
   static_assert(sizeof(hash8) == 8, "Invalid structure size");
@@ -75,10 +72,16 @@ namespace crypto {
   
   enum struct cn_slow_hash_type
   {
-      heavy_v0,
-	  heavy_v7,
-      heavy_v8,
-      cn_conceal_v0
+#ifdef ENABLE_MONERO_SLOW_HASH
+    // NOTE: Monero's slow hash for Android only, we still use the old hashing algorithm for hashing the KeyStore containing private keys
+    cryptonight_v0,
+    cryptonight_v0_prehashed,
+    cryptonight_v1_prehashed,
+#endif
+
+    heavy_v1,
+    heavy_v2,
+    turtle_lite_v2,
   };
   
   
@@ -96,10 +99,39 @@ namespace crypto {
       case cn_slow_hash_type::heavy_v8:
 		cn_slow_hash(data, length, reinterpret_cast<char *>(&hash), 2, 0/*prehashed*/);
       break;
-      case cn_slow_hash_type::cn_conceal_v0:
+
+#ifdef ENABLE_MONERO_SLOW_HASH
+      case cn_slow_hash_type::cryptonight_v0:
+      case cn_slow_hash_type::cryptonight_v1_prehashed:
+      {
+        int variant = 0, prehashed = 0;
+        if (type == cn_slow_hash_type::cryptonight_v1_prehashed)
+        {
+          prehashed = 1;
+          variant   = 1;
+        }
+        else if (type == cn_slow_hash_type::cryptonight_v0_prehashed)
+        {
+          prehashed = 1;
+        }
+
+        cn_monero_hash(data, length, hash.data, variant, prehashed);
+      }
+      break;
+#endif
+
+      case cn_slow_hash_type::turtle_lite_v2:
       default:
       {
-		  crypto::cn_conceal_slow_hash_v0(data, length, hash.data);
+         const uint32_t CN_TURTLE_SCRATCHPAD = 262144;
+         const uint32_t CN_TURTLE_ITERATIONS = 131072;
+         cn_turtle_hash(data,
+             length,
+             hash.data,
+             1, // light
+             2, // variant
+             0, // pre-hashed
+             CN_TURTLE_SCRATCHPAD, CN_TURTLE_ITERATIONS);
       }
       break;
     }
@@ -112,15 +144,33 @@ namespace crypto {
     tree_hash(reinterpret_cast<const char (*)[HASH_SIZE]>(hashes), count, reinterpret_cast<char *>(&root_hash));
   }
 
-  inline std::ostream &operator <<(std::ostream &o, const crypto::hash &v) {
-    epee::to_hex::formatted(o, epee::as_byte_span(v)); return o;
+  constexpr size_t SIZE_TS_IN_HASH = sizeof(crypto::hash) / sizeof(size_t);
+  static_assert(SIZE_TS_IN_HASH * sizeof(size_t) == sizeof(crypto::hash) && alignof(crypto::hash) >= alignof(size_t),
+      "Expected crypto::hash size/alignment not satisfied");
+
+  // Combine hashes together via XORs.
+  inline crypto::hash& operator^=(crypto::hash& a, const crypto::hash& b) {
+    size_t (&dest)[SIZE_TS_IN_HASH] = reinterpret_cast<size_t (&)[SIZE_TS_IN_HASH]>(a);
+    const size_t (&src)[SIZE_TS_IN_HASH] = reinterpret_cast<const size_t (&)[SIZE_TS_IN_HASH]>(b);
+    for (size_t i = 0; i < SIZE_TS_IN_HASH; ++i)
+      dest[i] ^= src[i];
+    return a;
   }
-  inline std::ostream &operator <<(std::ostream &o, const crypto::hash8 &v) {
-    epee::to_hex::formatted(o, epee::as_byte_span(v)); return o;
+  inline crypto::hash operator^(const crypto::hash& a, const crypto::hash& b) {
+    crypto::hash c = a;
+    c ^= b;
+    return c;
   }
 
-  const static crypto::hash null_hash = boost::value_initialized<crypto::hash>();
-  const static crypto::hash8 null_hash8 = boost::value_initialized<crypto::hash8>();
+  inline std::ostream &operator <<(std::ostream &o, const crypto::hash &v) {
+    return o << '<' << tools::type_to_hex(v) << '>';
+  }
+  inline std::ostream &operator <<(std::ostream &o, const crypto::hash8 &v) {
+    return o << '<' << tools::type_to_hex(v) << '>';
+  }
+
+  constexpr inline crypto::hash null_hash = {};
+  constexpr inline crypto::hash8 null_hash8 = {};
 }
 
 CRYPTO_MAKE_HASHABLE(hash)

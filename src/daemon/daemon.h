@@ -29,32 +29,56 @@
 
 #pragma once
 #include <boost/program_options.hpp>
+#include "cryptonote_core/cryptonote_core.h"
+#include "cryptonote_protocol/cryptonote_protocol_handler.h"
+#include "p2p/net_node.h"
+#include "rpc/core_rpc_server.h"
+#include "rpc/http_server.h"
+#include "rpc/lmq_server.h"
+
+#include "blocks/blocks.h"
+#include "rpc/core_rpc_server.h"
+#include "cryptonote_core/cryptonote_core.h"
+#include "cryptonote_protocol/cryptonote_protocol_handler.h"
+#include "epee/misc_log_ex.h"
 
 #undef BELDEX_DEFAULT_LOG_CATEGORY
 #define BELDEX_DEFAULT_LOG_CATEGORY "daemon"
 
-namespace daemonize {
+namespace daemonize
+{
 
-struct t_internals;
+// Parse an IP:PORT string into a {IP,PORT} pair.  Throws if the string value is not valid.  Accepts
+// both IPv4 and IPv6 addresses, but the latter must be specified in square brackets, e.g. [::1]:2345,
+// and will be returned *without* square brackets.
+std::pair<std::string, uint16_t> parse_ip_port(std::string_view ip_port, const std::string& argname);
 
-class t_daemon final {
+class daemon {
 public:
-  static void init_options(boost::program_options::options_description & option_spec);
-private:
-  void stop_p2p();
-private:
-  std::unique_ptr<t_internals> mp_internals;
-  std::string zmq_rpc_bind_address;
-  std::string zmq_rpc_bind_port;
-public:
-  t_daemon(
-      boost::program_options::variables_map const & vm
-    );
-  t_daemon(t_daemon && other);
-  t_daemon & operator=(t_daemon && other);
-  ~t_daemon();
+  static void init_options(boost::program_options::options_description& option_spec, boost::program_options::options_description& hidden);
+
+  daemon(boost::program_options::variables_map vm);
+  ~daemon();
 
   bool run(bool interactive = false);
   void stop();
+
+private:
+
+  boost::program_options::variables_map vm;
+
+  /// 💩
+  using protocol_handler = cryptonote::t_cryptonote_protocol_handler<cryptonote::core>;
+  using node_server = nodetool::node_server<protocol_handler>;
+
+  // Core objects; these are in unique ptrs because we want daemon to be movable and most of these
+  // are not movable, and std::unique_ptr is a sort of pre-C++17 poor man's std::optional.
+  std::unique_ptr<cryptonote::core> core;
+  std::unique_ptr<protocol_handler> protocol;
+  std::unique_ptr<node_server> p2p;
+  std::unique_ptr<cryptonote::rpc::core_rpc_server> rpc;
+  std::optional<cryptonote::rpc::http_server> http_rpc_admin, http_rpc_public;
+  std::unique_ptr<cryptonote::rpc::lmq_rpc> lmq_rpc;
 };
-}
+
+} // namespace daemonize

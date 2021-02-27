@@ -28,8 +28,8 @@
 
 #include "gtest/gtest.h"
 
-#include "misc_log_ex.h"
-#include "mlocker.h"
+#include "epee/misc_log_ex.h"
+#include "epee/mlocker.h"
 
 #if defined __GNUC__ && !defined _WIN32
 #define HAVE_MLOCK 1

@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 //
 // All rights reserved.
 //
@@ -32,26 +32,24 @@
 
 #include <unordered_map>
 #include <unordered_set>
-#include <boost/filesystem.hpp>
-#include <boost/range/adaptor/transformed.hpp>
-#include <boost/algorithm/string.hpp>
 #include <boost/archive/portable_binary_iarchive.hpp>
 #include <boost/archive/portable_binary_oarchive.hpp>
 #include "common/unordered_containers_boost_serialization.h"
 #include "common/command_line.h"
 #include "common/varint.h"
+#include "common/signal_handler.h"
+#include "common/fs.h"
+#include "serialization/boost_std_variant.h"
 #include "cryptonote_basic/cryptonote_boost_serialization.h"
 #include "cryptonote_core/cryptonote_core.h"
 #include "blockchain_objects.h"
 #include "blockchain_db/blockchain_db.h"
-#include "blockchain_db/db_types.h"
 #include "version.h"
 
 #undef BELDEX_DEFAULT_LOG_CATEGORY
 #define BELDEX_DEFAULT_LOG_CATEGORY "bcutil"
 
 namespace po = boost::program_options;
-using namespace epee;
 using namespace cryptonote;
 
 static bool stop_requested = false;
@@ -93,17 +91,14 @@ struct tx_data_t
   tx_data_t(): coinbase(false) {}
   tx_data_t(const cryptonote::transaction &tx)
   {
-    coinbase = tx.vin.size() == 1 && tx.vin[0].type() == typeid(cryptonote::txin_gen);
+    coinbase = tx.vin.size() == 1 && std::holds_alternative<cryptonote::txin_gen>(tx.vin[0]);
     if (!coinbase)
     {
       vin.reserve(tx.vin.size());
       for (size_t ring = 0; ring < tx.vin.size(); ++ring)
       {
-        if (tx.vin[ring].type() == typeid(cryptonote::txin_to_key))
-        {
-          const cryptonote::txin_to_key &txin = boost::get<cryptonote::txin_to_key>(tx.vin[ring]);
-          vin.push_back(std::make_pair(txin.amount, cryptonote::relative_output_offsets_to_absolute(txin.key_offsets)));
-        }
+        if (const auto* txin = std::get_if<cryptonote::txin_to_key>(&tx.vin[ring]))
+          vin.push_back(std::make_pair(txin->amount, cryptonote::relative_output_offsets_to_absolute(txin->key_offsets)));
         else
         {
           LOG_PRINT_L0("Bad vin type in txid " << get_transaction_hash(tx));
@@ -114,10 +109,9 @@ struct tx_data_t
     vout.reserve(tx.vout.size());
     for (size_t out = 0; out < tx.vout.size(); ++out)
     {
-      if (tx.vout[out].target.type() == typeid(cryptonote::txout_to_key))
+      if (const auto* txout = std::get_if<cryptonote::txout_to_key>(&tx.vout[out].target))
       {
-        const auto &txout = boost::get<cryptonote::txout_to_key>(tx.vout[out].target);
-        vout.push_back(txout.key);
+        vout.push_back(txout->key);
       }
       else
       {
@@ -154,8 +148,8 @@ struct ancestry_state_t
     {
       std::unordered_map<crypto::hash, cryptonote::transaction> old_tx_cache;
       a & old_tx_cache;
-      for (const auto i: old_tx_cache)
-        tx_cache.insert(std::make_pair(i.first, ::tx_data_t(i.second)));
+      for (const auto& [hash, tx] : old_tx_cache)
+        tx_cache.insert(std::make_pair(hash, ::tx_data_t(tx)));
     }
     else
     {
@@ -165,9 +159,9 @@ struct ancestry_state_t
     {
       std::unordered_map<uint64_t, cryptonote::block> old_block_cache;
       a & old_block_cache;
-      block_cache.resize(old_block_cache.size());
-      for (const auto i: old_block_cache)
-        block_cache[i.first] = i.second;
+      block_cache.reserve(old_block_cache.size());
+      for (auto& [i, block] : old_block_cache)
+        block_cache.push_back(std::move(block));
     }
     else
     {
@@ -297,10 +291,9 @@ static bool get_output_txid(ancestry_state_t &state, BlockchainDB *db, uint64_t 
 
   for (size_t out = 0; out < b.miner_tx.vout.size(); ++out)
   {
-    if (b.miner_tx.vout[out].target.type() == typeid(cryptonote::txout_to_key))
+    if (const auto* txout = std::get_if<cryptonote::txout_to_key>(&b.miner_tx.vout[out].target))
     {
-      const auto &txout = boost::get<cryptonote::txout_to_key>(b.miner_tx.vout[out].target);
-      if (txout.key == od.pubkey)
+      if (txout->key == od.pubkey)
       {
         txid = cryptonote::get_transaction_hash(b.miner_tx);
         if (opt_cache_outputs)
@@ -340,23 +333,15 @@ int main(int argc, char* argv[])
 
   epee::string_tools::set_module_name_and_folder(argv[0]);
 
-  std::string default_db_type = "lmdb";
-
-  std::string available_dbs = cryptonote::blockchain_db_types(", ");
-  available_dbs = "available: " + available_dbs;
-
   uint32_t log_level = 0;
 
   tools::on_startup();
 
-  boost::filesystem::path output_file_path;
+  auto opt_size = command_line::boost_option_sizes();
 
-  po::options_description desc_cmd_only("Command line options");
-  po::options_description desc_cmd_sett("Command line options and settings options");
+  po::options_description desc_cmd_only("Command line options", opt_size.first, opt_size.second);
+  po::options_description desc_cmd_sett("Command line options and settings options", opt_size.first, opt_size.second);
   const command_line::arg_descriptor<std::string> arg_log_level  = {"log-level",  "0-4 or categories", ""};
-  const command_line::arg_descriptor<std::string> arg_database = {
-    "database", available_dbs.c_str(), default_db_type
-  };
   const command_line::arg_descriptor<std::string> arg_txid  = {"txid", "Get ancestry for this txid", ""};
   const command_line::arg_descriptor<std::string> arg_output  = {"output", "Get ancestry for this output (amount/offset format)", ""};
   const command_line::arg_descriptor<uint64_t> arg_height  = {"height", "Get ancestry for all txes at this height", 0};
@@ -369,9 +354,8 @@ int main(int argc, char* argv[])
 
   command_line::add_arg(desc_cmd_sett, cryptonote::arg_data_dir);
   command_line::add_arg(desc_cmd_sett, cryptonote::arg_testnet_on);
-  command_line::add_arg(desc_cmd_sett, cryptonote::arg_stagenet_on);
+  command_line::add_arg(desc_cmd_sett, cryptonote::arg_devnet_on);
   command_line::add_arg(desc_cmd_sett, arg_log_level);
-  command_line::add_arg(desc_cmd_sett, arg_database);
   command_line::add_arg(desc_cmd_sett, arg_txid);
   command_line::add_arg(desc_cmd_sett, arg_output);
   command_line::add_arg(desc_cmd_sett, arg_height);
@@ -399,7 +383,7 @@ int main(int argc, char* argv[])
 
   if (command_line::get_arg(vm, command_line::arg_help))
   {
-    std::cout << "Beldex '" << BELDEX_RELEASE_NAME << "' (v" << BELDEX_VERSION_FULL << ")" << ENDL << ENDL;
+    std::cout << "Beldex '" << BELDEX_RELEASE_NAME << "' (v" << BELDEX_VERSION_FULL << ")\n\n";
     std::cout << desc_options << std::endl;
     return 1;
   }
@@ -414,8 +398,8 @@ int main(int argc, char* argv[])
 
   std::string opt_data_dir = command_line::get_arg(vm, cryptonote::arg_data_dir);
   bool opt_testnet = command_line::get_arg(vm, cryptonote::arg_testnet_on);
-  bool opt_stagenet = command_line::get_arg(vm, cryptonote::arg_stagenet_on);
-  network_type net_type = opt_testnet ? TESTNET : opt_stagenet ? STAGENET : MAINNET;
+  bool opt_devnet = command_line::get_arg(vm, cryptonote::arg_devnet_on);
+  network_type net_type = opt_testnet ? TESTNET : opt_devnet ? DEVNET : MAINNET;
   std::string opt_txid_string = command_line::get_arg(vm, arg_txid);
   std::string opt_output_string = command_line::get_arg(vm, arg_output);
   uint64_t opt_height = command_line::get_arg(vm, arg_height);
@@ -435,7 +419,7 @@ int main(int argc, char* argv[])
   uint64_t output_amount = 0, output_offset = 0;
   if (!opt_txid_string.empty())
   {
-    if (!epee::string_tools::hex_to_pod(opt_txid_string, opt_txid))
+    if (!tools::hex_to_type(opt_txid_string, opt_txid))
     {
       std::cerr << "Invalid txid" << std::endl;
       return 1;
@@ -450,37 +434,30 @@ int main(int argc, char* argv[])
     }
   }
 
-  std::string db_type = command_line::get_arg(vm, arg_database);
-  if (!cryptonote::blockchain_valid_db_type(db_type))
-  {
-    std::cerr << "Invalid database type: " << db_type << std::endl;
-    return 1;
-  }
-
   LOG_PRINT_L0("Initializing source blockchain (BlockchainDB)");
   blockchain_objects_t blockchain_objects = {};
   Blockchain *core_storage = &blockchain_objects.m_blockchain;
-  BlockchainDB *db = new_db(db_type);
+  BlockchainDB *db = new_db();
   if (db == NULL)
   {
-    LOG_ERROR("Attempted to use non-existent database type: " << db_type);
-    throw std::runtime_error("Attempting to use non-existent database type");
+    LOG_ERROR("Failed to initialize a database");
+    throw std::runtime_error("Failed to initialize a database");
   }
-  LOG_PRINT_L0("database: " << db_type);
+  LOG_PRINT_L0("database: LMDB");
 
-  const std::string filename = (boost::filesystem::path(opt_data_dir) / db->get_db_name()).string();
+  fs::path filename = fs::u8path(opt_data_dir) / db->get_db_name();
   LOG_PRINT_L0("Loading blockchain from folder " << filename << " ...");
 
   try
   {
-    db->open(filename, DBF_RDONLY);
+    db->open(filename, core_storage->nettype(), DBF_RDONLY);
   }
   catch (const std::exception& e)
   {
     LOG_PRINT_L0("Error opening database: " << e.what());
     return 1;
   }
-  r = core_storage->init(db, net_type);
+  r = core_storage->init(db, nullptr /*lns_db*/, net_type);
 
   CHECK_AND_ASSERT_MES(r, 1, "Failed to initialize source blockchain storage");
   LOG_PRINT_L0("Source blockchain storage initialized OK");
@@ -489,9 +466,9 @@ int main(int argc, char* argv[])
 
   ancestry_state_t state;
 
-  const std::string state_file_path = (boost::filesystem::path(opt_data_dir) / "ancestry-state.bin").string();
+  fs::path state_file_path = fs::u8path(opt_data_dir) / "ancestry-state.bin";
   LOG_PRINT_L0("Loading state data from " << state_file_path);
-  std::ifstream state_data_in;
+  fs::ifstream state_data_in;
   state_data_in.open(state_file_path, std::ios_base::binary | std::ios_base::in);
   if (!state_data_in.fail())
   {

@@ -27,7 +27,7 @@
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "gtest/gtest.h"
-#include "wipeable_string.h"
+#include "epee/wipeable_string.h"
 #include "mnemonics/language_base.h"
 #include "mnemonics/electrum-words.h"
 #include "crypto/crypto.h"
@@ -82,7 +82,7 @@ namespace
     crypto::secret_key randkey;
     for (size_t ii = 0; ii < sizeof(randkey); ++ii)
     {
-      randkey.data[ii] = rand();
+      randkey.data[ii] = crypto::rand<uint8_t>();
     }
     crypto::ElectrumWords::bytes_to_words(randkey, w_seed, language.get_language_name());
     seed = std::string(w_seed.data(), w_seed.size());

@@ -27,94 +27,74 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-include_directories(SYSTEM ${OPENSSL_INCLUDE_DIR})
-
-set(common_sources
+add_library(common
+  aligned.c
   base58.cpp
+  combinator.cpp
   command_line.cpp
   dns_utils.cpp
-  download.cpp
   error.cpp
   expect.cpp
-  beldex.cpp
-  util.cpp
+  file.cpp
   i18n.cpp
-  rules.cpp
+  beldex.cpp
   notify.cpp
   password.cpp
   perf_timer.cpp
   pruning.cpp
+  random.cpp
+  rules.cpp
   scoped_message_writer.cpp
+  sha256sum.cpp
   spawn.cpp
+  string_util.cpp
   threadpool.cpp
-  updates.cpp
-  aligned.c
-  combinator.cpp)
+  util.cpp
+  ${PROJECT_BINARY_DIR}/translations/translation_files.cpp
+  )
+
+set_source_files_properties(${PROJECT_BINARY_DIR}/translations/translation_files.cpp PROPERTIES GENERATED 1)
+add_dependencies(common generate_translation_data)
+
 
 if (STACK_TRACE)
-  list(APPEND common_sources stack_trace.cpp)
+  target_sources(common PRIVATE stack_trace.cpp)
+  if(WIN32 OR STATIC)
+    target_compile_definitions(common PRIVATE STATICLIB)
+  endif()
 endif()
 
 if (BACKCOMPAT)
-  list(APPEND common_sources compat/glibc_compat.cpp)
+  target_sources(common PRIVATE compat/glibc_compat.cpp)
 endif()
 
-set(common_headers)
-
-set(common_private_headers
-  apply_permutation.h
-  base58.h
-  boost_serialization_helper.h
-  command_line.h
-  common_fwd.h
-  dns_utils.h
-  download.h
-  error.h
-  expect.h
-  beldex.h
-  http_connection.h
-  beldex_integration_test_hooks.h
-  notify.h
-  pod-class.h
-  pruning.h
-  rpc_client.h
-  scoped_message_writer.h
-  unordered_containers_boost_serialization.h
-  util.h
-  varint.h
-  i18n.h
-  password.h
-  perf_timer.h
-  rules.h
-  spawn.h
-  stack_trace.h
-  threadpool.h
-  updates.h
-  aligned.h
-  combinator.h)
-
-beldex_private_headers(common
-  ${common_private_headers})
-beldex_add_library(common
-  ${common_sources}
-  ${common_headers}
-  ${common_private_headers}
-  DEPENDS generate_translations_header)
 target_link_libraries(common
   PUBLIC
     cncrypto
-    ${UNBOUND_LIBRARY}
-    ${LIBUNWIND_LIBRARIES}
-    ${Boost_DATE_TIME_LIBRARY}
-    ${Boost_FILESYSTEM_LIBRARY}
-    ${Boost_SYSTEM_LIBRARY}
-    ${Boost_THREAD_LIBRARY}
-    ${Boost_REGEX_LIBRARY}
-    ${Boost_CHRONO_LIBRARY}
+    oxenmq::oxenmq
+    filesystem
   PRIVATE
-    ${OPENSSL_LIBRARIES}
-    ${EPEE_READLINE}
-    ${EXTRA_LIBRARIES})
+    libunbound
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    extra)
 
-#monero_install_headers(common
-#  ${common_headers})
+option(STACK_TRACE "Install a hook that dumps stack on exception" OFF)
+
+if(STACK_TRACE)
+# Can't install hook in static build on OSX, because OSX linker does not support --wrap
+# On ARM, having libunwind package (with .so's only) installed breaks static link.
+# When possible, avoid stack tracing using libunwind in favor of using easylogging++.
+  if (APPLE)
+  elseif (DEPENDS AND NOT LINUX)
+  elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND NOT MINGW)
+    target_link_libraries(common PRIVATE easylogging) # for diag output only
+  elseif (ARM AND STATIC)
+  else()
+    find_package(Libunwind)
+    if(LIBUNWIND_FOUND)
+      target_link_libraries(common PRIVATE ${LIBUNWIND_LIBRARIES})
+      target_include_directories(common PRIVATE ${LIBUNWIND_INCLUDE_DIR})
+    endif()
+  endif()
+endif()

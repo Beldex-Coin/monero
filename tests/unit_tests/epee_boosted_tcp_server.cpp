@@ -28,15 +28,16 @@
 // 
 // Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
-#include <boost/chrono/chrono.hpp>
-#include <boost/thread/condition_variable.hpp>
-#include <boost/thread/mutex.hpp>
+#include <chrono>
+#include <mutex>
+#include <condition_variable>
 
 #include "gtest/gtest.h"
 
-#include "include_base_utils.h"
-#include "string_tools.h"
-#include "net/abstract_tcp_server2.h"
+#include "epee/string_tools.h"
+#include "epee/net/abstract_tcp_server2.h"
+
+using namespace std::literals;
 
 namespace
 {
@@ -87,13 +88,13 @@ TEST(boosted_tcp_server, worker_threads_are_exception_resistant)
   test_tcp_server srv(epee::net_utils::e_connection_type_RPC); // RPC disables network limit for unit tests
   ASSERT_TRUE(srv.init_server(test_server_port, test_server_host));
 
-  boost::mutex mtx;
-  boost::condition_variable cond;
+  std::mutex mtx;
+  std::condition_variable cond;
   int counter = 0;
 
   auto counter_incrementer = [&counter, &cond, &mtx]()
   {
-    boost::unique_lock<boost::mutex> lock(mtx);
+    std::unique_lock lock{mtx};
     ++counter;
     if (4 <= counter)
     {
@@ -109,26 +110,23 @@ TEST(boosted_tcp_server, worker_threads_are_exception_resistant)
   ASSERT_TRUE(srv.async_call([&counter_incrementer]() { counter_incrementer(); throw 4; }));
 
   {
-    boost::unique_lock<boost::mutex> lock(mtx);
-    ASSERT_NE(boost::cv_status::timeout, cond.wait_for(lock, boost::chrono::seconds(5)));
-    ASSERT_EQ(4, counter);
+    std::unique_lock lock{mtx};
+    ASSERT_TRUE(cond.wait_for(lock, 5s, [&] { return counter == 4; }));
   }
 
   // Check if threads are alive
   counter = 0;
-  //auto counter_incrementer = [&counter]() { counter.fetch_add(1); epee::misc_utils::sleep_no_w(counter.load() * 10); };
   ASSERT_TRUE(srv.async_call(counter_incrementer));
   ASSERT_TRUE(srv.async_call(counter_incrementer));
   ASSERT_TRUE(srv.async_call(counter_incrementer));
   ASSERT_TRUE(srv.async_call(counter_incrementer));
 
   {
-    boost::unique_lock<boost::mutex> lock(mtx);
-    ASSERT_NE(boost::cv_status::timeout, cond.wait_for(lock, boost::chrono::seconds(5)));
-    ASSERT_EQ(4, counter);
+    std::unique_lock lock{mtx};
+    ASSERT_TRUE(cond.wait_for(lock, 5s, [&] { return counter == 4; }));
   }
 
   srv.send_stop_signal();
-  ASSERT_TRUE(srv.timed_wait_server_stop(5 * 1000));
+  ASSERT_TRUE(srv.server_stop());
   ASSERT_TRUE(srv.deinit_server());
 }

@@ -26,11 +26,10 @@
 // STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "include_base_utils.h"
-#include "file_io_utils.h"
-#include "serialization/keyvalue_serialization.h"
-#include "storages/portable_storage_template_helper.h"
-#include "storages/portable_storage_base.h"
+#include "common/file.h"
+#include "epee/serialization/keyvalue_serialization.h"
+#include "epee/storages/portable_storage_template_helper.h"
+#include "epee/storages/portable_storage_base.h"
 #include "fuzzer.h"
 
 class PortableStorageFuzzer: public Fuzzer
@@ -50,7 +49,7 @@ int PortableStorageFuzzer::run(const std::string &filename)
 {
   std::string s;
 
-  if (!epee::file_io_utils::load_file_to_string(filename, s))
+  if (!tools::slurp_file(filename, s))
   {
     std::cout << "Error: failed to load file " << filename << std::endl;
     return 1;

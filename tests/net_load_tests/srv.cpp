@@ -28,17 +28,17 @@
 // 
 // Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
-#include <boost/thread/mutex.hpp>
-#include <boost/thread/thread.hpp>
+#include <thread>
+#include <memory>
 
-#include "include_base_utils.h"
-#include "misc_log_ex.h"
-#include "storages/levin_abstract_invoke2.h"
+#include "epee/misc_log_ex.h"
+#include "epee/storages/levin_abstract_invoke2.h"
 #include "common/util.h"
 
 #include "net_load_tests.h"
 
 using namespace net_load_tests;
+using namespace std::literals;
 
 #define EXIT_ON_ERROR(cond) { if (!(cond)) { LOG_PRINT_L0("ERROR: " << #cond); exit(1); } else {} }
 
@@ -59,7 +59,7 @@ namespace
 
       //std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
-      boost::unique_lock<boost::mutex> lock(m_open_close_test_mutex);
+      std::unique_lock lock{m_open_close_test_mutex};
       if (!m_open_close_test_conn_id.is_nil())
       {
         EXIT_ON_ERROR(m_open_close_test_helper->handle_new_connection(context.m_connection_id, true));
@@ -70,7 +70,7 @@ namespace
     {
       test_levin_commands_handler::on_connection_close(context);
 
-      boost::unique_lock<boost::mutex> lock(m_open_close_test_mutex);
+      std::unique_lock lock{m_open_close_test_mutex};
       if (context.m_connection_id == m_open_close_test_conn_id)
       {
         LOG_PRINT_L0("Stop open/close test");
@@ -83,12 +83,12 @@ namespace
     CHAIN_LEVIN_NOTIFY_MAP2(test_connection_context);
 
     BEGIN_INVOKE_MAP2(srv_levin_commands_handler)
-      HANDLE_NOTIFY_T2(CMD_CLOSE_ALL_CONNECTIONS, &srv_levin_commands_handler::handle_close_all_connections)
-      HANDLE_NOTIFY_T2(CMD_SHUTDOWN, &srv_levin_commands_handler::handle_shutdown)
-      HANDLE_NOTIFY_T2(CMD_SEND_DATA_REQUESTS, &srv_levin_commands_handler::handle_send_data_requests)
-      HANDLE_INVOKE_T2(CMD_GET_STATISTICS, &srv_levin_commands_handler::handle_get_statistics)
-      HANDLE_INVOKE_T2(CMD_RESET_STATISTICS, &srv_levin_commands_handler::handle_reset_statistics)
-      HANDLE_INVOKE_T2(CMD_START_OPEN_CLOSE_TEST, &srv_levin_commands_handler::handle_start_open_close_test)
+      HANDLE_NOTIFY_T2(CMD_CLOSE_ALL_CONNECTIONS, handle_close_all_connections)
+      HANDLE_NOTIFY_T2(CMD_SHUTDOWN, handle_shutdown)
+      HANDLE_NOTIFY_T2(CMD_SEND_DATA_REQUESTS, handle_send_data_requests)
+      HANDLE_INVOKE_T2(CMD_GET_STATISTICS, handle_get_statistics)
+      HANDLE_INVOKE_T2(CMD_RESET_STATISTICS, handle_reset_statistics)
+      HANDLE_INVOKE_T2(CMD_START_OPEN_CLOSE_TEST, handle_start_open_close_test)
     END_INVOKE_MAP2()
 
     int handle_close_all_connections(int command, const CMD_CLOSE_ALL_CONNECTIONS::request& req, test_connection_context& context)
@@ -116,7 +116,7 @@ namespace
 
     int handle_start_open_close_test(int command, const CMD_START_OPEN_CLOSE_TEST::request& req, CMD_START_OPEN_CLOSE_TEST::response&, test_connection_context& context)
     {
-      boost::unique_lock<boost::mutex> lock(m_open_close_test_mutex);
+      std::unique_lock lock{m_open_close_test_mutex};
       if (0 == m_open_close_test_helper.get())
       {
         LOG_PRINT_L0("Start open/close test (" << req.open_request_target << ", " << req.max_opened_conn_count << ")");
@@ -189,10 +189,10 @@ namespace
       if (0 < count)
       {
         // Perhaps not all connections were closed, try to close it after 7 seconds
-        boost::shared_ptr<boost::asio::deadline_timer> sh_deadline(new boost::asio::deadline_timer(m_tcp_server.get_io_service(), boost::posix_time::seconds(7)));
+        auto sh_deadline = std::make_shared<boost::asio::steady_timer>(m_tcp_server.get_io_service(), 7s);
         sh_deadline->async_wait([=](const boost::system::error_code& ec)
         {
-          boost::shared_ptr<boost::asio::deadline_timer> t = sh_deadline; // Capture sh_deadline
+          std::shared_ptr<boost::asio::steady_timer> t = sh_deadline; // Capture sh_deadline
           if (!ec)
           {
             close_connections(cmd_conn_id);
@@ -209,7 +209,7 @@ namespace
     test_tcp_server& m_tcp_server;
 
     boost::uuids::uuid m_open_close_test_conn_id;
-    boost::mutex m_open_close_test_mutex;
+    std::mutex m_open_close_test_mutex;
     std::unique_ptr<open_close_test_helper> m_open_close_test_helper;
   };
 }
@@ -221,7 +221,7 @@ int main(int argc, char** argv)
   //set up logging options
   mlog_configure(mlog_get_default_log_path("net_load_tests_srv.log"), true);
 
-  size_t thread_count = (std::max)(min_thread_count, boost::thread::hardware_concurrency() / 2);
+  size_t thread_count = std::max(min_thread_count, std::thread::hardware_concurrency() / 2);
 
   test_tcp_server tcp_server(epee::net_utils::e_connection_type_RPC);
   if (!tcp_server.init_server(srv_port, "127.0.0.1"))

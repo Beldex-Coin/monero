@@ -47,7 +47,7 @@ public:
       return false;
 
     message = crypto::rand<crypto::hash>();
-    keys = cryptonote::keypair::generate(hw::get_device("default"));
+    keys = cryptonote::keypair{hw::get_device("default")};
     crypto::generate_signature(message, keys.pub, keys.sec, m_signature);
 
     return true;

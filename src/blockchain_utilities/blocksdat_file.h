@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 //
 // All rights reserved.
 //
@@ -32,8 +32,6 @@
 #include <boost/iostreams/stream.hpp>
 #include <boost/iostreams/device/back_inserter.hpp>
 #include <boost/iostreams/filtering_streambuf.hpp>
-#include <boost/filesystem/path.hpp>
-#include <boost/filesystem/operations.hpp>
 
 #include "cryptonote_basic/cryptonote_basic.h"
 #include "cryptonote_basic/cryptonote_boost_serialization.h"
@@ -47,6 +45,7 @@
 #include <atomic>
 
 #include "common/command_line.h"
+#include "common/fs.h"
 #include "version.h"
 
 #include "blockchain_utilities.h"
@@ -60,7 +59,7 @@ class BlocksdatFile
 public:
 
   bool store_blockchain_raw(cryptonote::Blockchain* cs, cryptonote::tx_memory_pool* txp,
-      boost::filesystem::path& output_file, uint64_t use_block_height=0);
+      fs::path& output_file, uint64_t use_block_height=0);
 
 protected:
 
@@ -69,7 +68,7 @@ protected:
   std::ofstream * m_raw_data_file;
 
   // open export file for write
-  bool open_writer(const boost::filesystem::path& file_path, uint64_t block_stop);
+  bool open_writer(const fs::path& file_path, uint64_t block_stop);
   bool initialize_file(uint64_t block_stop);
   bool close();
   void write_block(const crypto::hash &block_hash);

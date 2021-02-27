@@ -26,10 +26,11 @@
 // STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "include_base_utils.h"
-#include "file_io_utils.h"
+#include "epee/misc_log_ex.h"
+#include "common/file.h"
 #include "common/base58.h"
 #include "fuzzer.h"
+#include <iostream>
 
 class Base58Fuzzer: public Fuzzer
 {
@@ -48,7 +49,7 @@ int Base58Fuzzer::run(const std::string &filename)
 {
   std::string s;
 
-  if (!epee::file_io_utils::load_file_to_string(filename, s))
+  if (!tools::slurp_file(filename, s))
   {
     std::cout << "Error: failed to load file " << filename << std::endl;
     return 1;

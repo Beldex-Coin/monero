@@ -6,13 +6,14 @@ Public domain.
 
 #include <memory.h>
 #include <stdio.h>
+#include <string.h>
 #ifndef _MSC_VER
 #include <sys/param.h>
 #endif
 
 #include "chacha.h"
-#include "int-util.h"
-#include "warnings.h"
+#include "epee/int-util.h"
+#include "epee/warnings.h"
 
 /*
  * The following macros are used to obtain exact-width results.

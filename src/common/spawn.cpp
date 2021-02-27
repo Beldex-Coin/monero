@@ -1,4 +1,4 @@
-// Copyright (c) 2018, The Monero Project
+// Copyright (c) 2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -30,17 +30,17 @@
 #include <unistd.h>
 #include <sys/types.h>
 #ifdef _WIN32
-#include <boost/algorithm/string/join.hpp>
-#include <boost/scope_exit.hpp>
 #include <windows.h>
 #else
 #include <sys/wait.h>
 #include <signal.h>
 #endif
 
-#include "misc_log_ex.h"
+#include "epee/misc_log_ex.h"
 #include "util.h"
 #include "spawn.h"
+#include "beldex.h"
+#include "string_util.h"
 
 #undef BELDEX_DEFAULT_LOG_CATEGORY
 #define BELDEX_DEFAULT_LOG_CATEGORY "spawn"
@@ -48,26 +48,49 @@
 namespace tools
 {
 
-int spawn(const char *filename, const std::vector<std::string>& args, bool wait)
+#ifndef _WIN32
+static void closefrom(int fd)
+{
+#if defined __FreeBSD__ || defined __OpenBSD__ || defined __NetBSD__ || defined __DragonFly__
+  ::closefrom(fd);
+#else
+#if defined __GLIBC__
+  const int sc_open_max =  sysconf(_SC_OPEN_MAX);
+  const int MAX_FDS = std::min(65536, sc_open_max);
+#else
+  const int MAX_FDS = 65536;
+#endif
+  while (fd < MAX_FDS)
+  {
+    close(fd);
+    ++fd;
+  }
+#endif
+}
+#endif
+
+
+int spawn(const fs::path& filename, const std::vector<std::string>& args, bool wait)
 {
 #ifdef _WIN32
-  std::string joined = boost::algorithm::join(args, " ");
+  std::string joined = tools::join(" ", args);
   char *commandLine = !joined.empty() ? &joined[0] : nullptr;
   STARTUPINFOA si = {};
   si.cb = sizeof(si);
   PROCESS_INFORMATION pi;
-  if (!CreateProcessA(filename, commandLine, nullptr, nullptr, false, 0, nullptr, nullptr, &si, &pi))
+  // This .string() is wrong for non-ascii paths, but if we switch to CreateProcessW and use
+  // .c_str() directly our commandLine argument will not be accepted (because it then has to be a
+  // wchar_t* but out input is utf-8).  Shame on you for this garbage API, Windows.
+  if (!CreateProcessA(filename.string().c_str(), commandLine, nullptr, nullptr, false, 0, nullptr, nullptr, &si, &pi))
   {
     MERROR("CreateProcess failed. Error code " << GetLastError());
     return -1;
   }
-  
-  BOOST_SCOPE_EXIT(&pi)
-  {
+
+  BELDEX_DEFER {
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-  }
-  BOOST_SCOPE_EXIT_END
+  };
 
   if (!wait)
   {
@@ -91,7 +114,7 @@ int spawn(const char *filename, const std::vector<std::string>& args, bool wait)
   MINFO("Child exited with " << exitCode);
   return static_cast<int>(exitCode);
 #else
-  char **argv = (char**)alloca(sizeof(char*) * (args.size() + 1));
+  std::vector<char*> argv(args.size() + 1);
   for (size_t n = 0; n < args.size(); ++n)
     argv[n] = (char*)args[n].c_str();
   argv[args.size()] = NULL;
@@ -109,7 +132,7 @@ int spawn(const char *filename, const std::vector<std::string>& args, bool wait)
     tools::closefrom(3);
     close(0);
     char *envp[] = {NULL};
-    execve(filename, argv, envp);
+    execve(filename.c_str(), argv.data(), envp);
     MERROR("Failed to execve: " << strerror(errno));
     return -1;
   }

@@ -27,14 +27,16 @@
 // STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
+#include "i18n.h"
+#include <cstdlib>
+#include <cstring>
+#include <cctype>
+#include <cstdint>
 #include <string>
 #include <map>
-#include "file_io_utils.h"
-#include "common/i18n.h"
-#include "translation_files.h"
+#include <utility>
+#include <algorithm>
+#include "file.h"
 
 #undef BELDEX_DEFAULT_LOG_CATEGORY
 #define BELDEX_DEFAULT_LOG_CATEGORY "i18n"
@@ -44,6 +46,8 @@
 static const unsigned char qm_magic[16] = {0x3c, 0xb8, 0x64, 0x18, 0xca, 0xef, 0x9c, 0x95, 0xcd, 0x21, 0x1c, 0xbf, 0x60, 0xa1, 0xbd, 0xdd};
 
 static std::map<std::string,std::string> i18n_entries;
+
+using namespace std::literals;
 
 /* Logging isn't initialized yet when this is run */
 /* add std::flush, because std::endl doesn't seem to flush, contrary to expected */
@@ -131,51 +135,40 @@ static std::string utf8(const unsigned char *data, uint32_t len)
 
 int i18n_set_language(const char *directory, const char *base, std::string language)
 {
-  std::string filename, contents;
-  const unsigned char *data;
-  size_t datalen;
-  size_t idx;
-  unsigned char chunk_type;
-  uint32_t chunk_size;
-  uint32_t num_messages = (uint32_t)-1;
-  uint32_t messages_idx = (uint32_t)-1;
-  uint32_t offsets_idx = (uint32_t)-1;
-  std::string translation, source, context;
-
   i18n_log("i18n_set_language(" << directory << "," << base << ")");
   if (!directory || !base)
     return -1;
 
   if (language.empty())
     language = i18n_get_language();
-  filename = std::string(directory) + "/" + base + "_" + language + ".qm";
+  std::string basename = base + "_"s + language + ".qm";
+  auto filename = fs::u8path(directory) / fs::u8path(basename);
   i18n_log("Loading translations for language " << language);
 
-  boost::system::error_code ignored_ec;
-  if (boost::filesystem::exists(filename, ignored_ec)) {
-    if (!epee::file_io_utils::load_file_to_string(filename, contents)) {
+  std::string contents;
+  if (std::error_code ec; fs::exists(filename, ec)) {
+    if (!tools::slurp_file(filename, contents)) {
       i18n_log("Failed to load translations file: " << filename);
       return -1;
     }
   } else {
     i18n_log("Translations file not found: " << filename);
-    filename = std::string(base) + "_" + language + ".qm";
-    if (!find_embedded_file(filename, contents)) {
-      i18n_log("Embedded translations file not found: " << filename);
+    if (!find_embedded_file(basename, contents)) {
+      i18n_log("Embedded translations file not found: " << basename);
       const char *underscore = strchr(language.c_str(), '_');
       if (underscore) {
         std::string fallback_language = std::string(language, 0, underscore - language.c_str());
-        filename = std::string(directory) + "/" + base + "_" + fallback_language + ".qm";
+        basename = base + "_"s + fallback_language + ".qm";
+        filename.replace_filename(fs::u8path(basename));
         i18n_log("Loading translations for language " << fallback_language);
-        if (boost::filesystem::exists(filename, ignored_ec)) {
-          if (!epee::file_io_utils::load_file_to_string(filename, contents)) {
+        if (std::error_code ec; fs::exists(filename, ec)) {
+          if (!tools::slurp_file(filename, contents)) {
             i18n_log("Failed to load translations file: " << filename);
             return -1;
           }
         } else {
           i18n_log("Translations file not found: " << filename);
-          filename = std::string(base) + "_" + fallback_language + ".qm";
-          if (!find_embedded_file(filename, contents)) {
+          if (!find_embedded_file(basename, contents)) {
             i18n_log("Embedded translations file not found: " << filename);
             return -1;
           }
@@ -186,9 +179,9 @@ int i18n_set_language(const char *directory, const char *base, std::string langu
     }
   }
 
-  data = (const unsigned char*)contents.c_str();
-  datalen = contents.size();
-  idx = 0;
+  const unsigned char *data = reinterpret_cast<const unsigned char*>(contents.c_str());
+  size_t datalen = contents.size();
+  size_t idx = 0;
   i18n_log("Translations file size: " << datalen);
 
   /* Format of the QM file (AFAICT):
@@ -222,6 +215,11 @@ int i18n_set_language(const char *directory, const char *base, std::string langu
   }
   idx += sizeof(qm_magic);
 
+  unsigned char chunk_type;
+  uint32_t chunk_size;
+  uint32_t num_messages = (uint32_t)-1;
+  uint32_t messages_idx = (uint32_t)-1;
+  uint32_t offsets_idx = (uint32_t)-1;
   while (idx < datalen) {
     if (idx + 5 > datalen) {
       i18n_log("Bad translations file format: " << filename);
@@ -265,6 +263,7 @@ int i18n_set_language(const char *directory, const char *base, std::string langu
     return -1;
   }
 
+  std::string translation, source, context;
   for (uint32_t m = 0; m < num_messages; ++m) {
     be32(data+offsets_idx+m*8); // unused
     idx = be32(data+offsets_idx+m*8+4);
@@ -283,10 +282,10 @@ int i18n_set_language(const char *directory, const char *base, std::string langu
       chunk_type = data[idx++];
       chunk_size = 0;
       if (chunk_type == 0x01) {
-        i18n_entries[context + std::string("",1) + source] = translation;
-        context = std::string();
-        source = std::string();
-        translation = std::string();
+        i18n_entries[context + "\0"s + source] = translation;
+        context.clear();
+        source.clear();
+        translation.clear();
         break;
       }
 
@@ -321,7 +320,7 @@ int i18n_set_language(const char *directory, const char *base, std::string langu
 /* The entries is constant by that time */
 const char *i18n_translate(const char *s, const std::string &context)
 {
-  const std::string key = context + std::string("", 1) + s;
+  const std::string key = context + "\0"s + s;
   std::map<std::string,std::string>::const_iterator i = i18n_entries.find(key);
   if (i == i18n_entries.end())
     return s;

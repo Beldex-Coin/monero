@@ -1,4 +1,4 @@
-// Copyright (c) 2018, The Monero Project
+// Copyright (c) 2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -27,10 +27,13 @@
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once 
+#include <vector>
+#include <string>
+#include "common/fs.h"
 
 namespace tools
 {
 
-int spawn(const char *filename, const std::vector<std::string>& args, bool wait);
+int spawn(const fs::path& filename, const std::vector<std::string>& args, bool wait);
 
 }

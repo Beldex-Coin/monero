@@ -1,4 +1,4 @@
-// Copyright (c) 2018, The Monero Project
+// Copyright (c) 2019, The Monero Project
 //
 // All rights reserved.
 //
@@ -35,14 +35,14 @@
 #include <boost/serialization/vector.hpp>
 #include <boost/program_options/variables_map.hpp>
 #include <boost/program_options/options_description.hpp>
-#include <boost/optional/optional.hpp>
+#include <optional>
 #include "serialization/serialization.h"
 #include "cryptonote_basic/cryptonote_boost_serialization.h"
 #include "cryptonote_basic/account_boost_serialization.h"
 #include "cryptonote_basic/cryptonote_basic.h"
 #include "common/i18n.h"
 #include "common/command_line.h"
-#include "wipeable_string.h"
+#include "common/fs.h"
 #include "message_transporter.h"
 
 #undef BELDEX_DEFAULT_LOG_CATEGORY
@@ -196,13 +196,14 @@ namespace mms
     bool has_multisig_partial_key_images;
     uint32_t multisig_rounds_passed;
     size_t num_transfer_details;
-    std::string mms_file;
+    fs::path mms_file;
   };
 
   class message_store
   {
   public:
     message_store();
+
     // Initialize and start to use the MMS, set the first signer, this wallet itself
     // Filename, if not null and not empty, is used to create the ".mms" file
     // reset it if already used, with deletion of all signers and messages
@@ -219,9 +220,9 @@ namespace mms
 
     void set_signer(const multisig_wallet_state &state,
                     uint32_t index,
-                    const boost::optional<std::string> &label,
-                    const boost::optional<std::string> &transport_address,
-                    const boost::optional<cryptonote::account_public_address> monero_address);
+                    const std::optional<std::string> &label,
+                    const std::optional<std::string> &transport_address,
+                    const std::optional<cryptonote::account_public_address> monero_address);
 
     const authorized_signer &get_signer(uint32_t index) const;
     bool get_signer_index_by_monero_address(const cryptonote::account_public_address &monero_address, uint32_t &index) const;
@@ -279,8 +280,8 @@ namespace mms
     bool check_for_messages(const multisig_wallet_state &state, std::vector<message> &messages);
     void stop() { m_run.store(false, std::memory_order_relaxed); m_transporter.stop(); }
 
-    void write_to_file(const multisig_wallet_state &state, const std::string &filename);
-    void read_from_file(const multisig_wallet_state &state, const std::string &filename);
+    void write_to_file(const multisig_wallet_state &state, const fs::path &filename);
+    void read_from_file(const multisig_wallet_state &state, const fs::path &filename);
 
     template <class t_archive>
     inline void serialize(t_archive &a, const unsigned int ver)
@@ -312,7 +313,7 @@ namespace mms
     std::vector<authorized_signer> m_signers;
     std::vector<message> m_messages;
     uint32_t m_next_message_id;
-    std::string m_filename;
+    fs::path m_filename;
     message_transporter m_transporter;
     std::atomic<bool> m_run;
 

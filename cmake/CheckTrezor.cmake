@@ -1,58 +1,52 @@
-OPTION(USE_DEVICE_TREZOR "Trezor support compilation" ON)
 OPTION(USE_DEVICE_TREZOR_LIBUSB "Trezor LibUSB compilation" ON)
 OPTION(USE_DEVICE_TREZOR_UDP_RELEASE "Trezor UdpTransport in release mode" OFF)
+OPTION(USE_DEVICE_TREZOR_DEBUG "Trezor Debugging enabled" OFF)
+OPTION(TREZOR_DEBUG "Main trezor debugging switch" OFF)
 
-# Helper function to fix cmake < 3.6.0 FindProtobuf variables
-function(_trezor_protobuf_fix_vars)
-    if(${CMAKE_VERSION} VERSION_LESS "3.6.0")
-        foreach(UPPER
-                PROTOBUF_SRC_ROOT_FOLDER
-                PROTOBUF_IMPORT_DIRS
-                PROTOBUF_DEBUG
-                PROTOBUF_LIBRARY
-                PROTOBUF_PROTOC_LIBRARY
-                PROTOBUF_INCLUDE_DIR
-                PROTOBUF_PROTOC_EXECUTABLE
-                PROTOBUF_LIBRARY_DEBUG
-                PROTOBUF_PROTOC_LIBRARY_DEBUG
-                PROTOBUF_LITE_LIBRARY
-                PROTOBUF_LITE_LIBRARY_DEBUG
-                )
-            if (DEFINED ${UPPER})
-                string(REPLACE "PROTOBUF_" "Protobuf_" Camel ${UPPER})
-                if (NOT DEFINED ${Camel})
-                    set(${Camel} ${${UPPER}} PARENT_SCOPE)
-                endif()
-            endif()
-        endforeach()
-    endif()
-endfunction()
+add_library(protobuf INTERFACE)
 
 # Use Trezor master switch
 if (USE_DEVICE_TREZOR)
+    if (BUILD_STATIC_DEPS)
+        add_library(libusb INTERFACE)
+        target_link_libraries(libusb INTERFACE libusb_vendor)
+        target_compile_definitions(libusb INTERFACE HAVE_TREZOR_LIBUSB=1)
+        target_link_libraries(protobuf INTERFACE protobuf_lite)
+        target_compile_definitions(protobuf INTERFACE DEVICE_TREZOR_READY=1 PROTOBUF_INLINE_NOT_IN_HEADERS=0)
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+            target_compile_definitions(protobuf INTERFACE TREZOR_DEBUG=1)
+        endif()
+        if(USE_DEVICE_TREZOR_UDP_RELEASE)
+            target_compile_definitions(protobuf INTERFACE USE_DEVICE_TREZOR_UDP_RELEASE=1)
+        endif()
+        return()
+    endif()
+
     # Protobuf is required to build protobuf messages for Trezor
     include(FindProtobuf OPTIONAL)
     find_package(Protobuf)
-    _trezor_protobuf_fix_vars()
 
     # Protobuf handling the cache variables set in docker.
-    if(NOT Protobuf_FOUND AND NOT Protobuf_LIBRARY AND NOT Protobuf_PROTOC_EXECUTABLE AND NOT Protobuf_INCLUDE_DIR)
+    if(NOT Protobuf_FOUND)
         message(STATUS "Could not find Protobuf")
-    elseif(NOT Protobuf_LIBRARY OR NOT EXISTS "${Protobuf_LIBRARY}")
-        message(STATUS "Protobuf library not found: ${Protobuf_LIBRARY}")
+    elseif(NOT TARGET protobuf::libprotobuf)
+        message(STATUS "Protobuf library not found")
         unset(Protobuf_FOUND)
     elseif(NOT Protobuf_PROTOC_EXECUTABLE OR NOT EXISTS "${Protobuf_PROTOC_EXECUTABLE}")
         message(STATUS "Protobuf executable not found: ${Protobuf_PROTOC_EXECUTABLE}")
         unset(Protobuf_FOUND)
-    elseif(NOT Protobuf_INCLUDE_DIR OR NOT EXISTS "${Protobuf_INCLUDE_DIR}")
-        message(STATUS "Protobuf include dir not found: ${Protobuf_INCLUDE_DIR}")
-        unset(Protobuf_FOUND)
     else()
-        message(STATUS "Protobuf lib: ${Protobuf_LIBRARY}, inc: ${Protobuf_INCLUDE_DIR}, protoc: ${Protobuf_PROTOC_EXECUTABLE}")
-        set(Protobuf_INCLUDE_DIRS ${Protobuf_INCLUDE_DIR})
-        set(Protobuf_FOUND 1)  # override found if all rquired info was provided by variables
+        message(STATUS "Protobuf lib ${Protobuf_VERSION}, protoc: ${Protobuf_PROTOC_EXECUTABLE}")
     endif()
 
+    if(TREZOR_DEBUG)
+        set(USE_DEVICE_TREZOR_DEBUG 1)
+    endif()
+
+    # Compile debugging support (for tests)
+    if (USE_DEVICE_TREZOR_DEBUG)
+        add_definitions(-DWITH_TREZOR_DEBUGGING=1)
+    endif()
 else()
     message(STATUS "Trezor support disabled by USE_DEVICE_TREZOR")
 endif()
@@ -94,7 +88,7 @@ if(Protobuf_FOUND AND USE_DEVICE_TREZOR AND TREZOR_PYTHON)
         CMAKE_FLAGS
         "-DINCLUDE_DIRECTORIES=${Protobuf_INCLUDE_DIR};${CMAKE_BINARY_DIR}"
         "-DCMAKE_CXX_STANDARD=11"
-        LINK_LIBRARIES ${Protobuf_LIBRARY}
+        LINK_LIBRARIES protobuf::libprotobuf
         OUTPUT_VARIABLE OUTPUT
     )
     if(NOT Protobuf_COMPILE_TEST_PASSED)
@@ -104,9 +98,15 @@ endif()
 
 # Try to build protobuf messages
 if(Protobuf_FOUND AND USE_DEVICE_TREZOR AND TREZOR_PYTHON AND Protobuf_COMPILE_TEST_PASSED)
-    set(ENV{PROTOBUF_INCLUDE_DIRS} "${Protobuf_INCLUDE_DIR}")
-    set(ENV{PROTOBUF_PROTOC_EXECUTABLE} "${Protobuf_PROTOC_EXECUTABLE}")
-    execute_process(COMMAND ${TREZOR_PYTHON} tools/build_protob.py WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/../src/device_trezor/trezor RESULT_VARIABLE RET OUTPUT_VARIABLE OUT ERROR_VARIABLE ERR)
+    set(TREZOR_PROTOBUF_PARAMS "")
+    if (USE_DEVICE_TREZOR_DEBUG)
+        set(TREZOR_PROTOBUF_PARAMS "--debug")
+    endif()
+
+    execute_process(COMMAND ${CMAKE_COMMAND} -E env "PROTOBUF_INCLUDE_DIRS=${Protobuf_INCLUDE_DIR}" "PROTOBUF_PROTOC_EXECUTABLE=${Protobuf_PROTOC_EXECUTABLE}"
+            ${TREZOR_PYTHON} tools/build_protob.py ${TREZOR_PROTOBUF_PARAMS}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/../src/device_trezor/trezor
+        RESULT_VARIABLE RET OUTPUT_VARIABLE OUT ERROR_VARIABLE ERR)
     if(RET)
         message(WARNING "Trezor protobuf messages could not be regenerated (err=${RET}, python ${PYTHON})."
                 "OUT: ${OUT}, ERR: ${ERR}."
@@ -114,43 +114,38 @@ if(Protobuf_FOUND AND USE_DEVICE_TREZOR AND TREZOR_PYTHON AND Protobuf_COMPILE_T
     else()
         message(STATUS "Trezor protobuf messages regenerated out: \"${OUT}.\"")
         set(DEVICE_TREZOR_READY 1)
-        add_definitions(-DDEVICE_TREZOR_READY=1)
-        add_definitions(-DPROTOBUF_INLINE_NOT_IN_HEADERS=0)
+        target_compile_definitions(protobuf INTERFACE DEVICE_TREZOR_READY=1 PROTOBUF_INLINE_NOT_IN_HEADERS=0)
 
         if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-            add_definitions(-DTREZOR_DEBUG=1)
+            target_compile_definitions(protobuf INTERFACE TREZOR_DEBUG=1)
         endif()
 
         if(USE_DEVICE_TREZOR_UDP_RELEASE)
-            add_definitions(-DUSE_DEVICE_TREZOR_UDP_RELEASE=1)
+            target_compile_definitions(protobuf INTERFACE USE_DEVICE_TREZOR_UDP_RELEASE=1)
         endif()
 
         if (Protobuf_INCLUDE_DIR)
-            include_directories(${Protobuf_INCLUDE_DIR})
+            target_include_directories(protobuf INTERFACE ${Protobuf_INCLUDE_DIR})
         endif()
+
+        target_link_libraries(protobuf INTERFACE protobuf::libprotobuf)
 
         # LibUSB support, check for particular version
         # Include support only if compilation test passes
-        if (USE_DEVICE_TREZOR_LIBUSB)
-            find_package(LibUSB)
-        endif()
+        add_library(libusb INTERFACE)
+        find_package(LibUSB)
 
         if (LibUSB_COMPILE_TEST_PASSED)
-            add_definitions(-DHAVE_TREZOR_LIBUSB=1)
+            target_compile_definitions(libusb INTERFACE HAVE_TREZOR_LIBUSB=1)
             if(LibUSB_INCLUDE_DIRS)
-                include_directories(${LibUSB_INCLUDE_DIRS})
+                target_include_directories(libusb INTERFACE ${LibUSB_INCLUDE_DIRS})
             endif()
+
+            target_link_libraries(libusb INTERFACE ${LibUSB_LIBRARIES} ${LIBUSB_DEP_LINKER})
+            message(STATUS "Trezor compatible LibUSB found")
         endif()
 
-        set(TREZOR_LIBUSB_LIBRARIES "")
-        if(LibUSB_COMPILE_TEST_PASSED)
-            list(APPEND TREZOR_LIBUSB_LIBRARIES ${LibUSB_LIBRARIES})
-            message(STATUS "Trezor compatible LibUSB found at: ${LibUSB_INCLUDE_DIRS}")
-        endif()
-
-        if (BUILD_GUI_DEPS)
-            set(TREZOR_DEP_LIBS "")
-            set(TREZOR_DEP_LINKER "")
+        if (ANDROID)
 
             if (Protobuf_LIBRARY)
                 list(APPEND TREZOR_DEP_LIBS ${Protobuf_LIBRARY})
@@ -159,7 +154,7 @@ if(Protobuf_FOUND AND USE_DEVICE_TREZOR AND TREZOR_PYTHON AND Protobuf_COMPILE_T
 
             if (TREZOR_LIBUSB_LIBRARIES)
                 list(APPEND TREZOR_DEP_LIBS ${TREZOR_LIBUSB_LIBRARIES})
-                string(APPEND TREZOR_DEP_LINKER " -lusb-1.0")
+                string(APPEND TREZOR_DEP_LINKER " -lusb-1.0 ${LIBUSB_DEP_LINKER}")
             endif()
         endif()
     endif()

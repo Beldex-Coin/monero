@@ -26,8 +26,7 @@
 
 #pragma once
 
-#include <boost/thread.hpp>
-#include <boost/bind.hpp> 
+#include <thread>
 
 #include "net/abstract_tcp_server2.h"
 #include "net/levin_protocol_handler.h"
@@ -62,7 +61,7 @@ namespace tests
   {
     const static int ID = 1000;
 
-    struct request
+    struct request_t
     {		
 
       std::string example_string_data;
@@ -75,9 +74,9 @@ namespace tests
         SERIALIZE_T(sub)
       END_NAMED_SERIALIZE_MAP()
     };
+    typedef epee::misc_utils::struct_init<request_t> request;
 
-
-    struct response
+    struct response_t
     {
       bool 	 m_success; 
       uint64_t example_id_data;
@@ -89,13 +88,14 @@ namespace tests
         SERIALIZE_STL_CONTAINER_T(subs)
       END_NAMED_SERIALIZE_MAP()
     };
+    typedef epee::misc_utils::struct_init<response_t> response;
   };
 
   struct COMMAND_EXAMPLE_2
   {
     const static int ID = 1001;
 
-    struct request
+    struct request_t
     {		
       std::string example_string_data2;
       uint64_t example_id_data;
@@ -105,8 +105,9 @@ namespace tests
         SERIALIZE_STL_ANSI_STRING(example_string_data2)
       END_NAMED_SERIALIZE_MAP()
     };
+    typedef epee::misc_utils::struct_init<request_t> request;
 
-    struct response
+    struct response_t
     {
       bool m_success; 
       uint64_t example_id_data;
@@ -116,6 +117,7 @@ namespace tests
         SERIALIZE_POD(m_success)
       END_NAMED_SERIALIZE_MAP()
     };
+    typedef epee::misc_utils::struct_init<response_t> response;
   };
   typedef boost::uuids::uuid uuid;
 
@@ -201,17 +203,17 @@ namespace tests
     CHAIN_LEVIN_NOTIFY_TO_STUB(); //move levin_commands_handler interface notify(...) callbacks into nothing
 
     BEGIN_INVOKE_MAP(test_levin_server)
-      HANDLE_INVOKE_T(COMMAND_EXAMPLE_1, &test_levin_server::handle_1)
-      HANDLE_INVOKE_T(COMMAND_EXAMPLE_2, &test_levin_server::handle_2)
+      HANDLE_INVOKE_T(COMMAND_EXAMPLE_1, handle_1)
+      HANDLE_INVOKE_T(COMMAND_EXAMPLE_2, handle_2)
     END_INVOKE_MAP()
 
     //----------------- commands handlers ----------------------------------------------
     int handle_1(int command, COMMAND_EXAMPLE_1::request& arg, COMMAND_EXAMPLE_1::response& rsp, const net_utils::connection_context_base& context)
     {
       LOG_PRINT_L0("on_command_1: id " << arg.example_id_data << "---->>");      
-      COMMAND_EXAMPLE_2::request arg_ = AUTO_VAL_INIT(arg_);
+      COMMAND_EXAMPLE_2::request arg_{};
       arg_.example_id_data = arg.example_id_data;
-      COMMAND_EXAMPLE_2::response rsp_ = AUTO_VAL_INIT(rsp_);
+      COMMAND_EXAMPLE_2::response rsp_{};
       invoke_async<COMMAND_EXAMPLE_2::response>(context.m_connection_id, COMMAND_EXAMPLE_2::ID, arg_, [](int code, const COMMAND_EXAMPLE_2::response& rsp, const net_utils::connection_context_base& context)
         {
           if(code < 0)
@@ -260,8 +262,8 @@ namespace tests
     srv1.set_thread_prefix("SRV_A");
     srv2.set_thread_prefix("SRV_B");
 
-    boost::thread th1( boost::bind(&test_levin_server::run, &srv1));
-    boost::thread th2( boost::bind(&test_levin_server::run, &srv2));
+    std::thread th1{[&srv1] { srv1.run(); }};
+    std::thread th2{[&srv2] { srv2.run(); }};
 
     LOG_PRINT_L0("Initialized servers, waiting for worker threads started...");
     misc_utils::sleep_no_w(1000);  
@@ -313,26 +315,23 @@ namespace tests
   inline bool do_test2_work_with_srv(test_levin_server& srv, int port)
   {
     uint64_t i = 0;
-    boost::mutex wait_event;
+    std::mutex wait_event;
     wait_event.lock();
     while(true)
     {
-      net_utils::connection_context_base cntxt_local = AUTO_VAL_INIT(cntxt_local);
+      net_utils::connection_context_base cntxt_local{};
       bool r = srv.connect_async("127.0.0.1", string_tools::num_to_string_fast(port), 5000, [&srv, &port, &wait_event, &i, &cntxt_local](const net_utils::connection_context_base& cntxt, const boost::system::error_code& ec)
       {
         CHECK_AND_ASSERT_MES(!ec, void(), "Some problems at connect, message: " << ec.message() );
         cntxt_local = cntxt;
         LOG_PRINT_L0("Invoking command 1 to " << port);
-        COMMAND_EXAMPLE_1::request arg = AUTO_VAL_INIT(arg);
+        COMMAND_EXAMPLE_1::request arg{};
         arg.example_id_data = i;
-        /*vc2010 workaround*/
-        int port_ = port;
-        boost::mutex& wait_event_ = wait_event;
-        int r = srv.invoke_async<COMMAND_EXAMPLE_1::request>(cntxt.m_connection_id, COMMAND_EXAMPLE_1::ID, arg, [port_, &wait_event_](int code, const COMMAND_EXAMPLE_1::request& rsp, const net_utils::connection_context_base& cntxt)
+        int r = srv.invoke_async<COMMAND_EXAMPLE_1::request>(cntxt.m_connection_id, COMMAND_EXAMPLE_1::ID, arg, [&port, &wait_event](int code, const COMMAND_EXAMPLE_1::request& rsp, const net_utils::connection_context_base& cntxt)
         {
             CHECK_AND_ASSERT_MES(code > 0, void(), "Failed to invoke"); 
-            LOG_PRINT_L0("command 1 invoke to " << port_ << " OK.");
-            wait_event_.unlock();
+            LOG_PRINT_L0("command 1 invoke to " << port << " OK.");
+            wait_event.unlock();
         });        
       });
       wait_event.lock();
@@ -366,11 +365,11 @@ namespace tests
     srv1.set_thread_prefix("SRV_A");
     srv2.set_thread_prefix("SRV_B");
 
-    boost::thread thmain1( boost::bind(&test_levin_server::run, &srv1));
-    boost::thread thmain2( boost::bind(&test_levin_server::run, &srv2));
+    std::thread thmain1{ [&srv1] { srv1.run(); } };
+    std::thread thmain2{ [&srv2] { srv2.run(); } };
 
     LOG_PRINT_L0("Initalized servers, waiting for worker threads started...");
-    misc_utils::sleep_no_w(1000);  
+    misc_utils::sleep_no_w(1000);
 
 
     LOG_PRINT_L0("Connecting to each other...");
@@ -381,14 +380,14 @@ namespace tests
     COMMAND_EXAMPLE_1::request resp;
 
 
-    boost::thread work_1( boost::bind(do_test2_work_with_srv, boost::ref(srv1), port2));
-    boost::thread work_2( boost::bind(do_test2_work_with_srv, boost::ref(srv2), port1));
-    boost::thread work_3( boost::bind(do_test2_work_with_srv, boost::ref(srv1), port2));
-    boost::thread work_4( boost::bind(do_test2_work_with_srv, boost::ref(srv2), port1));
-    boost::thread work_5( boost::bind(do_test2_work_with_srv, boost::ref(srv1), port2));
-    boost::thread work_6( boost::bind(do_test2_work_with_srv, boost::ref(srv2), port1));
-    boost::thread work_7( boost::bind(do_test2_work_with_srv, boost::ref(srv1), port2));
-    boost::thread work_8( boost::bind(do_test2_work_with_srv, boost::ref(srv2), port1));
+    std::thread work_1{ [&] { do_test2_work_with_srv(srv1, port2); } };
+    std::thread work_2{ [&] { do_test2_work_with_srv(srv2, port1); } };
+    std::thread work_3{ [&] { do_test2_work_with_srv(srv1, port2); } };
+    std::thread work_4{ [&] { do_test2_work_with_srv(srv2, port1); } };
+    std::thread work_5{ [&] { do_test2_work_with_srv(srv1, port2); } };
+    std::thread work_6{ [&] { do_test2_work_with_srv(srv2, port1); } };
+    std::thread work_7{ [&] { do_test2_work_with_srv(srv1, port2); } };
+    std::thread work_8{ [&] { do_test2_work_with_srv(srv2, port1); } };
 
 
     work_1.join();

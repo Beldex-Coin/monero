@@ -36,14 +36,6 @@ bool check_scalar(const crypto::ec_scalar &scalar) {
   return crypto::sc_check(crypto::operator &(scalar)) == 0;
 }
 
-void random_scalar(crypto::ec_scalar &res) {
-  crypto::random_scalar(res);
-}
-
-void hash_to_scalar(const void *data, std::size_t length, crypto::ec_scalar &res) {
-  crypto::hash_to_scalar(data, length, res);
-}
-
 void hash_to_point(const crypto::hash &h, crypto::ec_point &res) {
   crypto::ge_p2 point;
   crypto::ge_fromfe_frombytes_vartime(&point, reinterpret_cast<const unsigned char *>(&h));

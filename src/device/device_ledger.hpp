@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2018, The Monero Project
+// Copyright (c) 2017-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -30,24 +30,71 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <string>
 #include "device.hpp"
+#include "log.hpp"
 #include "device_io_hid.hpp"
-#include <boost/thread/mutex.hpp>
-#include <boost/thread/recursive_mutex.hpp>
 
 namespace hw {
 
+    using namespace std::literals;
+
     namespace ledger {
+
+    // Required coin value as returned by INS_GET_NETWORK during connection
+    constexpr auto COIN_NETWORK = "BELDEX"sv;
+
+    /* Minimal supported version */
+    #define MINIMAL_APP_VERSION_MAJOR    0
+    #define MINIMAL_APP_VERSION_MINOR    9
+    #define MINIMAL_APP_VERSION_MICRO    0
+
+    #define VERSION(M,m,u)       ((M)<<16|(m)<<8|(u))
+    #define VERSION_MAJOR(v)     (((v)>>16)&0xFF)
+    #define VERSION_MINOR(v)     (((v)>>8)&0xFF)
+    #define VERSION_MICRO(v)     (((v)>>0)&0xFF)
+    
+    #define MINIMAL_APP_VERSION   VERSION(MINIMAL_APP_VERSION_MAJOR, MINIMAL_APP_VERSION_MINOR, MINIMAL_APP_VERSION_MICRO)
 
     void register_all(std::map<std::string, std::unique_ptr<device>> &registry);
 
     #ifdef WITH_DEVICE_LEDGER
 
-    namespace {
-        bool apdu_verbose =true;
-    }
+    #define SW_OK                                0x9000
+
+    #define SW_WRONG_LENGTH                      0x6700
+
+    #define SW_SECURITY_PIN_LOCKED               0x6910
+    #define SW_SECURITY_LOAD_KEY                 0x6911
+    #define SW_SECURITY_COMMITMENT_CONTROL       0x6912
+    #define SW_SECURITY_AMOUNT_CHAIN_CONTROL     0x6913
+    #define SW_SECURITY_COMMITMENT_CHAIN_CONTROL 0x6914
+    #define SW_SECURITY_OUTKEYS_CHAIN_CONTROL    0x6915
+    #define SW_SECURITY_MAXOUTPUT_REACHED        0x6916
+    #define SW_SECURITY_HMAC                     0x6917
+    #define SW_SECURITY_RANGE_VALUE              0x6918
+    #define SW_SECURITY_INTERNAL                 0x6919
+    #define SW_SECURITY_MAX_SIGNATURE_REACHED    0x691A
+    #define SW_SECURITY_PREFIX_HASH              0x691B
+    #define SW_SECURITY_LOCKED                   0x69EE
+
+    #define SW_COMMAND_NOT_ALLOWED    0x6980
+    #define SW_SUBCOMMAND_NOT_ALLOWED 0x6981
+    #define SW_DENY                   0x6982
+    #define SW_KEY_NOT_SET            0x6983
+    #define SW_WRONG_DATA             0x6984
+    #define SW_WRONG_DATA_RANGE       0x6985
+    #define SW_IO_FULL                0x6986
+
+    #define SW_CLIENT_NOT_SUPPORTED   0x6A30
+
+    #define SW_WRONG_P1P2             0x6B00
+    #define SW_INS_NOT_SUPPORTED      0x6D00
+    #define SW_PROTOCOL_NOT_SUPPORTED 0x6E00
+
+    #define SW_UNKNOWN 0x6F00
 
     void set_apdu_verbose(bool verbose);
 
@@ -63,7 +110,8 @@ namespace hw {
         rct::key AKout;
         ABPkeys(const rct::key& A, const rct::key& B, const bool is_subaddr, bool is_subaddress, bool is_change_address, size_t index, const rct::key& P,const rct::key& AK);
         ABPkeys(const ABPkeys& keys) ;
-        ABPkeys() {index=0;is_subaddress=false;is_subaddress=false;is_change_address=false;}
+        ABPkeys() {index=0;is_subaddress=false;is_change_address=false;additional_key=false;}
+        ABPkeys &operator=(const ABPkeys &keys);
     };
 
     class Keymap {
@@ -76,47 +124,94 @@ namespace hw {
         void log();
     };
 
+    class SecHMAC {
+    public:
+        uint32_t  sec[32];
+        uint32_t  hmac[32];
+
+        SecHMAC(const uint8_t s[32], const uint8_t m[32]);
+
+    };
+
+    class HMACmap {
+    public:
+        std::vector<SecHMAC>  hmacs;
+
+        void find_mac(const unsigned char sec[32], unsigned char hmac[32]) ;
+        void add_mac(const unsigned char sec[32], const unsigned char hmac[32]) ;
+        void clear() ;
+    };
+
+
     #define BUFFER_SEND_SIZE 262
     #define BUFFER_RECV_SIZE 262
 
     class device_ledger : public hw::device {
     private:
         // Locker for concurrent access
-        mutable boost::recursive_mutex   device_locker;
-        mutable boost::mutex   command_locker;
+        mutable std::recursive_mutex device_locker;
+        mutable std::mutex command_locker;
 
         //IO
         hw::io::device_io_hid hw_device;
-        unsigned int  length_send;
+        unsigned int length_send;
         unsigned char buffer_send[BUFFER_SEND_SIZE];
-        unsigned int  length_recv;
+        unsigned int length_recv;
         unsigned char buffer_recv[BUFFER_RECV_SIZE];
-        unsigned int  sw;
-        unsigned int  id;
-        void logCMD(void);
-        void logRESP(void);
-        unsigned int exchange(unsigned int ok=0x9000, unsigned int mask=0xFFFF);
-        unsigned int exchange_wait_on_input(unsigned int ok=0x9000, unsigned int mask=0xFFFF);
-        void reset_buffer(void);
-        int  set_command_header(unsigned char ins, unsigned char p1 = 0x00, unsigned char p2 = 0x00);
-        int  set_command_header_noopt(unsigned char ins, unsigned char p1 = 0x00, unsigned char p2 = 0x00);
+        unsigned int sw;
+        unsigned int id;
+        std::chrono::steady_clock::time_point last_cmd;
+        void logCMD();
+        void logRESP();
+        unsigned int exchange(bool wait_on_input = false);
+        void reset_buffer();
+        int set_command_header(unsigned char ins, unsigned char p1 = 0x00, unsigned char p2 = 0x00);
+        int set_command_header_noopt(unsigned char ins, unsigned char p1 = 0x00, unsigned char p2 = 0x00);
         void send_simple(unsigned char ins, unsigned char p1 = 0x00);
+        void send_bytes(const void* buf, size_t size, int& offset);
+        void receive_bytes(void* dest, size_t size, int& offset);
+        void receive_bytes(void* dest, size_t size);
+        void send_u16(uint16_t x, int& offset);
+        void send_u32(uint32_t x, int& offset);
+        uint32_t receive_u32(int& offset);
+        uint32_t receive_u32();
+        void send_secret(const unsigned char sec[32], int &offset);
+        void send_secret(const char sec[32], int &offset) { send_secret(reinterpret_cast<const unsigned char*>(sec), offset); }
+        void receive_secret(unsigned char sec[32], int &offset);
+        void receive_secret(char sec[32], int &offset) { receive_secret(reinterpret_cast<unsigned char*>(sec), offset); }
+        void check_network_type();
+        void exchange_multipart_data(uint8_t ins, uint8_t p1, std::string_view data, uint8_t chunk_size);
 
+        void send_finish(int& offset);
+        unsigned int finish_and_exchange(int& offset, bool wait_on_input = false);
 
         // hw running mode
         device_mode mode;
+        bool tx_in_progress;
+
+        cryptonote::network_type nettype = cryptonote::network_type::UNDEFINED; // Set by the wallet before connecting
+
         // map public destination key to ephemeral destination key
         Keymap key_map;
-        bool  add_output_key_mapping(const crypto::public_key &Aout, const crypto::public_key &Bout, const bool is_subaddress, const bool is_change,
-                                     const bool need_additional, const size_t real_output_index,
-                                     const rct::key &amount_key,  const crypto::public_key &out_eph_public_key);
+        bool add_output_key_mapping(
+            const crypto::public_key& Aout,
+            const crypto::public_key& Bout,
+            bool is_subaddress,
+            bool is_change,
+            bool need_additional,
+            size_t real_output_index,
+            const rct::key& amount_key,
+            const crypto::public_key& out_eph_public_key);
+        //hmac for some encrypted value
+        HMACmap hmac_map;
+
         // To speed up blockchain parsing the view key maybe handle here.
         crypto::secret_key viewkey;
         bool has_view_key;
         
         //extra debug
         #ifdef DEBUG_HWDEVICE
-        device *controle_device;
+        device *debug_device;
         #endif
 
     public:
@@ -128,19 +223,19 @@ namespace hw {
 
         explicit operator bool() const override {return this->connected(); }
 
-        bool  reset(void);
+        bool  reset();
 
         /* ======================================================================= */
         /*                              SETUP/TEARDOWN                             */
         /* ======================================================================= */
-        bool set_name(const std::string &name) override;
+        bool set_name(std::string_view name) override;
 
-        const std::string get_name() const override;
-        bool init(void) override;
+        std::string get_name() const override;
+        bool init() override;
         bool release() override;
-        bool connect(void) override;
+        bool connect() override;
         bool disconnect() override;
-        bool connected(void) const;
+        bool connected() const;
 
         bool set_mode(device_mode mode) override;
 
@@ -150,9 +245,9 @@ namespace hw {
         /* ======================================================================= */
         /*  LOCKER                                                                 */
         /* ======================================================================= */ 
-        void lock(void)  override;
-        void unlock(void) override;
-        bool try_lock(void) override;
+        void lock()  override;
+        void unlock() override;
+        bool try_lock() override;
 
         /* ======================================================================= */
         /*                             WALLET & ADDRESS                            */
@@ -160,7 +255,8 @@ namespace hw {
         bool  get_public_address(cryptonote::account_public_address &pubkey) override;
         bool  get_secret_keys(crypto::secret_key &viewkey , crypto::secret_key &spendkey) override;
         bool  generate_chacha_key(const cryptonote::account_keys &keys, crypto::chacha_key &key, uint64_t kdf_rounds) override;
-
+        void  display_address(const cryptonote::subaddress_index& index, const std::optional<crypto::hash8> &payment_id) override;
+        void  set_network_type(cryptonote::network_type network_type) override;
 
         /* ======================================================================= */
         /*                               SUB ADDRESS                               */
@@ -186,41 +282,53 @@ namespace hw {
         bool  derive_public_key(const crypto::key_derivation &derivation, const std::size_t output_index, const crypto::public_key &pub,  crypto::public_key &derived_pub) override;
         bool  secret_key_to_public_key(const crypto::secret_key &sec, crypto::public_key &pub) override;
         bool  generate_key_image(const crypto::public_key &pub, const crypto::secret_key &sec, crypto::key_image &image) override;
+        bool  generate_key_image_signature(const crypto::key_image& image, const crypto::public_key& pub, const crypto::secret_key& sec, crypto::signature& sig) override;
+        bool  generate_unlock_signature(const crypto::public_key& pub, const crypto::secret_key& sec, crypto::signature& sig) override;
+        bool  generate_lns_signature(std::string_view sig_data, const cryptonote::account_keys& keys, const cryptonote::subaddress_index& index, crypto::signature& sig) override;
 
         /* ======================================================================= */
         /*                               TRANSACTION                               */
         /* ======================================================================= */
+        void generate_tx_proof(const crypto::hash &prefix_hash, 
+                                   const crypto::public_key &R, const crypto::public_key &A, const std::optional<crypto::public_key> &B, const crypto::public_key &D, const crypto::secret_key &r,
+                                   crypto::signature &sig) override;
+        
+        bool open_tx(crypto::secret_key &tx_key, cryptonote::txversion tx_version, cryptonote::txtype tx_type) override;
 
-        bool  open_tx(crypto::secret_key &tx_key) override;
-
+        void get_transaction_prefix_hash(const cryptonote::transaction_prefix& tx, crypto::hash& h) override;
+    
         bool  encrypt_payment_id(crypto::hash8 &payment_id, const crypto::public_key &public_key, const crypto::secret_key &secret_key) override;
+
+        rct::key genCommitmentMask(const rct::key &amount_key) override;
 
         bool  ecdhEncode(rct::ecdhTuple & unmasked, const rct::key & sharedSec, bool short_format) override;
         bool  ecdhDecode(rct::ecdhTuple & masked, const rct::key & sharedSec, bool short_format) override;
 
-        bool  generate_output_ephemeral_keys(const size_t tx_version, bool &found_change, const cryptonote::account_keys &sender_account_keys, const crypto::public_key &txkey_pub,  const crypto::secret_key &tx_key,
-                                             const cryptonote::tx_destination_entry &dst_entr, const boost::optional<cryptonote::tx_destination_entry> &change_addr, const size_t output_index,
-                                             const bool &need_additional_txkeys, const std::vector<crypto::secret_key> &additional_tx_keys,
-                                             std::vector<crypto::public_key> &additional_tx_public_keys,
-                                             std::vector<rct::key> &amount_keys, 
-                                             crypto::public_key &out_eph_public_key) override;
+        bool generate_output_ephemeral_keys(
+            size_t tx_version,
+            bool& found_change,
+            const cryptonote::account_keys& sender_account_keys,
+            const crypto::public_key& txkey_pub,
+            const crypto::secret_key& tx_key,
+            const cryptonote::tx_destination_entry& dst_entr,
+            const std::optional<cryptonote::tx_destination_entry>& change_addr,
+            size_t output_index,
+            bool need_additional_txkeys,
+            const std::vector<crypto::secret_key>& additional_tx_keys,
+            std::vector<crypto::public_key>& additional_tx_public_keys,
+            std::vector<rct::key>& amount_keys,
+            crypto::public_key& out_eph_public_key) override;
 
-        bool  mlsag_prehash(const std::string &blob, size_t inputs_size, size_t outputs_size, const rct::keyV &hashes, const rct::ctkeyV &outPk, rct::key &prehash) override;
-        bool  mlsag_prepare(const rct::key &H, const rct::key &xx, rct::key &a, rct::key &aG, rct::key &aHP, rct::key &rvII) override;
-        bool  mlsag_prepare(rct::key &a, rct::key &aG) override;
-        bool  mlsag_hash(const rct::keyV &long_message, rct::key &c) override;
-        bool  mlsag_sign( const rct::key &c, const rct::keyV &xx, const rct::keyV &alpha, const size_t rows, const size_t dsRows, rct::keyV &ss) override;
+        bool clsag_prehash(const std::string &blob, size_t inputs_size, size_t outputs_size, const rct::keyV &hashes, const rct::ctkeyV &outPk, rct::key &prehash) override;
+        bool clsag_prepare(const rct::key &p, const rct::key &z, rct::key &I, rct::key &D, const rct::key &H, rct::key &a, rct::key &aG, rct::key &aH) override;
+        bool clsag_hash(const rct::keyV &data, rct::key &hash) override;
+        bool clsag_sign(const rct::key &c, const rct::key &a, const rct::key &p, const rct::key &z, const rct::key &mu_P, const rct::key &mu_C, rct::key &s) override;
 
-        bool  close_tx(void) override;
+        bool update_staking_tx_secret_key(crypto::secret_key& key) override;
+
+        bool close_tx() override;
 
     };
-
-
-    #ifdef DEBUG_HWDEVICE
-    extern crypto::secret_key dbg_viewkey;
-    extern crypto::secret_key dbg_spendkey;
-    #endif
-
     #endif  //WITH_DEVICE_LEDGER
   }
 

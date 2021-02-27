@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -38,7 +38,6 @@
 #include "cryptonote_basic/cryptonote_format_utils.h"
 #include "cryptonote_core/cryptonote_tx_utils.h"
 #include "rpc/core_rpc_server_commands_defs.h"
-#include "include_base_utils.h"
 
 
 namespace tools
@@ -81,6 +80,7 @@ namespace tools
     //         not_enough_outs_to_mix
     //         tx_not_constructed
     //         tx_rejected
+    //           tx_blink_rejected
     //         tx_sum_overflow
     //         tx_too_big
     //         zero_destination
@@ -103,7 +103,7 @@ namespace tools
       std::string to_string() const
       {
         std::ostringstream ss;
-        ss << m_loc << ':' << typeid(*this).name() << ": " << Base::what();
+        ss << m_loc << ':' << tools::type_name(typeid(*this)) << ": " << Base::what();
         return ss.str();
       }
 
@@ -248,24 +248,17 @@ namespace tools
     template<int msg_index>
     struct file_error_base : public wallet_logic_error
     {
-      explicit file_error_base(std::string&& loc, const std::string& file)
-        : wallet_logic_error(std::move(loc), std::string(file_error_messages[msg_index]) +  " \"" + file + '\"')
-        , m_file(file)
+      file_error_base(std::string loc, fs::path file, std::error_code e = {})
+        : wallet_logic_error(std::move(loc), std::string(file_error_messages[msg_index]) + " \"" + file.u8string() + '"'
+                + (e ? ": " + e.message() : ""))
+        , m_file(std::move(file))
       {
       }
 
-      explicit file_error_base(std::string&& loc, const std::string& file, const std::error_code &e)
-        : wallet_logic_error(std::move(loc), std::string(file_error_messages[msg_index]) +  " \"" + file + "\": " + e.message())
-        , m_file(file)
-      {
-      }
-
-      const std::string& file() const { return m_file; }
-
-      std::string to_string() const { return wallet_logic_error::to_string(); }
+      const fs::path& file() const { return m_file; }
 
     private:
-      std::string m_file;
+      fs::path m_file;
     };
     //----------------------------------------------------------------------------------------------------
     typedef file_error_base<file_exists_message_index> file_exists;
@@ -415,8 +408,8 @@ namespace tools
     //----------------------------------------------------------------------------------------------------
     struct get_tx_pool_error : public refresh_error
     {
-      explicit get_tx_pool_error(std::string&& loc)
-        : refresh_error(std::move(loc), "Error getting transaction pool")
+      explicit get_tx_pool_error(std::string&& loc, const std::string &message = "")
+        : refresh_error(std::move(loc), "Error getting transaction pool " + message)
       {
       }
 
@@ -603,12 +596,12 @@ namespace tools
           // It's not good, if logs will contain such much data
           //ss << "\n    real_output: " << src.real_output;
           //ss << "\n    real_output_in_tx_index: " << src.real_output_in_tx_index;
-          //ss << "\n    real_out_tx_key: " << epee::string_tools::pod_to_hex(src.real_out_tx_key);
+          //ss << "\n    real_out_tx_key: " << tools::type_to_hex(src.real_out_tx_key);
           //ss << "\n    outputs:";
           //for (size_t j = 0; j < src.outputs.size(); ++j)
           //{
           //  const cryptonote::tx_source_entry::output_entry& out = src.outputs[j];
-          //  ss << "\n      " << j << ": " << out.first << ", " << epee::string_tools::pod_to_hex(out.second);
+          //  ss << "\n      " << j << ": " << out.first << ", " << tools::type_to_hex(out.second);
           //}
         }
 
@@ -634,8 +627,8 @@ namespace tools
     //----------------------------------------------------------------------------------------------------
     struct tx_rejected : public transfer_error
     {
-      explicit tx_rejected(std::string&& loc, const cryptonote::transaction& tx, const std::string& status, const std::string& reason)
-        : transfer_error(std::move(loc), "Transaction was rejected by daemon")
+      explicit tx_rejected(std::string loc, const cryptonote::transaction& tx, const std::string& status, const std::string& reason, std::string base_msg = "Transaction was rejected by daemon")
+        : transfer_error(std::move(loc), std::move(base_msg) + (reason.size() ? ": " + reason : ""))
         , m_tx(tx)
         , m_status(status)
         , m_reason(reason)
@@ -663,6 +656,13 @@ namespace tools
       cryptonote::transaction m_tx;
       std::string m_status;
       std::string m_reason;
+    };
+    //----------------------------------------------------------------------------------------------------
+    struct tx_blink_rejected : public tx_rejected
+    {
+      tx_blink_rejected(std::string loc, const cryptonote::transaction& tx, const std::string& status, const std::string& reason)
+        : tx_rejected(std::move(loc), tx, status, reason, "Transaction was not accepted blink quorum")
+      {}
     };
     //----------------------------------------------------------------------------------------------------
     struct tx_sum_overflow : public transfer_error
@@ -707,26 +707,43 @@ namespace tools
       explicit tx_too_big(std::string&& loc, const cryptonote::transaction& tx, uint64_t tx_weight_limit)
         : transfer_error(std::move(loc), "Transaction is too big")
         , m_tx(tx)
+        , m_tx_valid(true)
+        , m_tx_weight(cryptonote::get_transaction_weight(tx))
         , m_tx_weight_limit(tx_weight_limit)
       {
       }
 
+      explicit tx_too_big(std::string&& loc, uint64_t tx_weight, uint64_t tx_weight_limit)
+        : transfer_error(std::move(loc), "transaction would be too big")
+        , m_tx_valid(false)
+        , m_tx_weight(tx_weight)
+        , m_tx_weight_limit(tx_weight_limit)
+      {
+      }
+
+      bool tx_valid() const { return m_tx_valid; }
       const cryptonote::transaction& tx() const { return m_tx; }
+      uint64_t tx_weight() const { return m_tx_weight; }
       uint64_t tx_weight_limit() const { return m_tx_weight_limit; }
 
       std::string to_string() const
       {
         std::ostringstream ss;
-        cryptonote::transaction tx = m_tx;
         ss << transfer_error::to_string() <<
           ", tx_weight_limit = " << m_tx_weight_limit <<
-          ", tx weight = " << get_transaction_weight(m_tx) <<
-          ", tx:\n" << cryptonote::obj_to_json_str(tx);
+          ", tx weight = " << m_tx_weight;
+        if (m_tx_valid)
+        {
+          cryptonote::transaction tx = m_tx;
+          ss << ", tx:\n" << cryptonote::obj_to_json_str(tx);
+        }
         return ss.str();
       }
 
     private:
       cryptonote::transaction m_tx;
+      bool m_tx_valid;
+      uint64_t m_tx_weight;
       uint64_t m_tx_weight_limit;
     };
     //----------------------------------------------------------------------------------------------------
@@ -814,27 +831,18 @@ namespace tools
     //----------------------------------------------------------------------------------------------------
     struct get_output_blacklist : public wallet_rpc_error
     {
-      explicit get_output_blacklist(std::string&& loc, const std::string& request)
-        : wallet_rpc_error(std::move(loc), "Failed to get output blacklist", request)
+      explicit get_output_blacklist(std::string &&loc, const std::string &request)
+      : wallet_rpc_error(std::move(loc), "Failed to get output blacklist", request)
       {
       }
     };
     //----------------------------------------------------------------------------------------------------
     struct wallet_files_doesnt_correspond : public wallet_logic_error
     {
-      explicit wallet_files_doesnt_correspond(std::string&& loc, const std::string& keys_file, const std::string& wallet_file)
-        : wallet_logic_error(std::move(loc), "File " + wallet_file + " does not correspond to " + keys_file)
+      explicit wallet_files_doesnt_correspond(std::string&& loc, const fs::path& keys_file, const fs::path& wallet_file)
+        : wallet_logic_error(std::move(loc), "File " + wallet_file.u8string() + " does not correspond to " + keys_file.u8string())
       {
       }
-
-      const std::string& keys_file() const { return m_keys_file; }
-      const std::string& wallet_file() const { return m_wallet_file; }
-
-      std::string to_string() const { return wallet_logic_error::to_string(); }
-
-    private:
-      std::string m_keys_file;
-      std::string m_wallet_file;
     };
     //----------------------------------------------------------------------------------------------------
     struct mms_error : public wallet_logic_error
@@ -863,40 +871,13 @@ namespace tools
     };
     //----------------------------------------------------------------------------------------------------
 
-#if !defined(_MSC_VER)
-
     template<typename TException, typename... TArgs>
-    void throw_wallet_ex(std::string&& loc, const TArgs&... args)
+    void throw_wallet_ex(std::string&& loc, TArgs&&... args)
     {
-      TException e(std::move(loc), args...);
+      TException e(std::move(loc), std::forward<TArgs>(args)...);
       LOG_PRINT_L0(e.to_string());
       throw e;
     }
-
-#else
-    #include <boost/preprocessor/repetition/enum_binary_params.hpp>
-    #include <boost/preprocessor/repetition/enum_params.hpp>
-    #include <boost/preprocessor/repetition/repeat_from_to.hpp>
-
-    template<typename TException>
-    void throw_wallet_ex(std::string&& loc)
-    {
-      TException e(std::move(loc));
-      LOG_PRINT_L0(e.to_string());
-      throw e;
-    }
-
-#define GEN_throw_wallet_ex(z, n, data)                                                       \
-    template<typename TException, BOOST_PP_ENUM_PARAMS(n, typename TArg)>                     \
-    void throw_wallet_ex(std::string&& loc, BOOST_PP_ENUM_BINARY_PARAMS(n, const TArg, &arg)) \
-    {                                                                                         \
-      TException e(std::move(loc), BOOST_PP_ENUM_PARAMS(n, arg));                             \
-      LOG_PRINT_L0(e.to_string());                                                            \
-      throw e;                                                                                \
-    }
-
-    BOOST_PP_REPEAT_FROM_TO(1, 6, GEN_throw_wallet_ex, ~)
-#endif
   }
 }
 
@@ -910,8 +891,8 @@ namespace tools
   } while(0)
 
 #define THROW_WALLET_EXCEPTION_IF(cond, err_type, ...)                                                      \
-  if (cond)                                                                                                 \
+  do { if (cond)                                                                                            \
   {                                                                                                         \
     LOG_ERROR(#cond << ". THROW EXCEPTION: " << #err_type);                                                 \
     tools::error::throw_wallet_ex<err_type>(std::string(__FILE__ ":" STRINGIZE(__LINE__)), ## __VA_ARGS__); \
-  }
+  } } while (0)

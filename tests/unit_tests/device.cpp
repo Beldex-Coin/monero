@@ -58,7 +58,7 @@ TEST(device, open_close)
 {
   hw::core::device_default dev;
   crypto::secret_key key;
-  ASSERT_TRUE(dev.open_tx(key));
+  ASSERT_TRUE(dev.open_tx(key, cryptonote::txversion::v4_tx_types, cryptonote::txtype::standard));
   ASSERT_TRUE(dev.close_tx());
 }
 

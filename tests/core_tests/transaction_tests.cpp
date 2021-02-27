@@ -28,11 +28,10 @@
 // 
 // Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
-#include "include_base_utils.h"
 #include "cryptonote_basic/cryptonote_basic_impl.h"
 #include "cryptonote_basic/account.h"
 #include "cryptonote_core/cryptonote_tx_utils.h"
-#include "misc_language.h"
+#include "epee/misc_language.h"
 
 using namespace cryptonote;
 
@@ -59,17 +58,17 @@ bool test_transaction_generation_and_ring_signature()
   account_base rv_acc2;
   rv_acc2.generate();
   transaction tx_mine_1;
-  construct_miner_tx(0, 0, 0, 10, 0, miner_acc1.get_keys().m_account_address, tx_mine_1);
+  construct_miner_tx(0, 0, 0, 10, 0, tx_mine_1, cryptonote::beldex_miner_tx_context::miner_block(cryptonote::FAKECHAIN, miner_acc1.get_keys().m_account_address));
   transaction tx_mine_2;
-  construct_miner_tx(0, 0, 0, 0, 0, miner_acc2.get_keys().m_account_address, tx_mine_2);
+  construct_miner_tx(0, 0, 0, 0, 0, tx_mine_2, cryptonote::beldex_miner_tx_context::miner_block(cryptonote::FAKECHAIN, miner_acc2.get_keys().m_account_address));
   transaction tx_mine_3;
-  construct_miner_tx(0, 0, 0, 0, 0, miner_acc3.get_keys().m_account_address, tx_mine_3);
+  construct_miner_tx(0, 0, 0, 0, 0, tx_mine_3, cryptonote::beldex_miner_tx_context::miner_block(cryptonote::FAKECHAIN, miner_acc3.get_keys().m_account_address));
   transaction tx_mine_4;
-  construct_miner_tx(0, 0, 0, 0, 0, miner_acc4.get_keys().m_account_address, tx_mine_4);
+  construct_miner_tx(0, 0, 0, 0, 0, tx_mine_4, cryptonote::beldex_miner_tx_context::miner_block(cryptonote::FAKECHAIN, miner_acc4.get_keys().m_account_address));
   transaction tx_mine_5;
-  construct_miner_tx(0, 0, 0, 0, 0, miner_acc5.get_keys().m_account_address, tx_mine_5);
+  construct_miner_tx(0, 0, 0, 0, 0, tx_mine_5, cryptonote::beldex_miner_tx_context::miner_block(cryptonote::FAKECHAIN, miner_acc5.get_keys().m_account_address));
   transaction tx_mine_6;
-  construct_miner_tx(0, 0, 0, 0, 0, miner_acc6.get_keys().m_account_address, tx_mine_6);
+  construct_miner_tx(0, 0, 0, 0, 0, tx_mine_6, cryptonote::beldex_miner_tx_context::miner_block(cryptonote::FAKECHAIN, miner_acc6.get_keys().m_account_address));
 
   //fill inputs entry
   typedef tx_source_entry::output_entry tx_output_entry;
@@ -80,17 +79,17 @@ bool test_transaction_generation_and_ring_signature()
   {
     tx_output_entry oe;
 
-    src.push_output(0, boost::get<txout_to_key>(tx_mine_1.vout[0].target).key, src.amount);
+    src.push_output(0, var::get<txout_to_key>(tx_mine_1.vout[0].target).key, src.amount);
 
-    src.push_output(1, boost::get<txout_to_key>(tx_mine_2.vout[0].target).key, src.amount);
+    src.push_output(1, var::get<txout_to_key>(tx_mine_2.vout[0].target).key, src.amount);
 
-    src.push_output(2, boost::get<txout_to_key>(tx_mine_3.vout[0].target).key, src.amount);
+    src.push_output(2, var::get<txout_to_key>(tx_mine_3.vout[0].target).key, src.amount);
 
-    src.push_output(3, boost::get<txout_to_key>(tx_mine_4.vout[0].target).key, src.amount);
+    src.push_output(3, var::get<txout_to_key>(tx_mine_4.vout[0].target).key, src.amount);
 
-    src.push_output(4, boost::get<txout_to_key>(tx_mine_5.vout[0].target).key, src.amount);
+    src.push_output(4, var::get<txout_to_key>(tx_mine_5.vout[0].target).key, src.amount);
 
-    src.push_output(5, boost::get<txout_to_key>(tx_mine_6.vout[0].target).key, src.amount);
+    src.push_output(5, var::get<txout_to_key>(tx_mine_6.vout[0].target).key, src.amount);
 
     src.real_out_tx_key = cryptonote::get_tx_pub_key_from_extra(tx_mine_2);
     src.real_output = 1;
@@ -105,18 +104,18 @@ bool test_transaction_generation_and_ring_signature()
   destinations.push_back(td);
 
   transaction tx_rc1;
-  bool r = construct_tx(miner_acc2.get_keys(), sources, destinations, boost::none, std::vector<uint8_t>(), tx_rc1, 0);
+  bool r = construct_tx(miner_acc2.get_keys(), sources, destinations, std::nullopt, std::vector<uint8_t>(), tx_rc1, 0);
   CHECK_AND_ASSERT_MES(r, false, "failed to construct transaction");
 
   crypto::hash pref_hash = get_transaction_prefix_hash(tx_rc1);
   std::vector<const crypto::public_key *> output_keys;
-  output_keys.push_back(&boost::get<txout_to_key>(tx_mine_1.vout[0].target).key);
-  output_keys.push_back(&boost::get<txout_to_key>(tx_mine_2.vout[0].target).key);
-  output_keys.push_back(&boost::get<txout_to_key>(tx_mine_3.vout[0].target).key);
-  output_keys.push_back(&boost::get<txout_to_key>(tx_mine_4.vout[0].target).key);
-  output_keys.push_back(&boost::get<txout_to_key>(tx_mine_5.vout[0].target).key);
-  output_keys.push_back(&boost::get<txout_to_key>(tx_mine_6.vout[0].target).key);
-  r = crypto::check_ring_signature(pref_hash, boost::get<txin_to_key>(tx_rc1.vin[0]).k_image, output_keys, &tx_rc1.signatures[0][0]);
+  output_keys.push_back(&var::get<txout_to_key>(tx_mine_1.vout[0].target).key);
+  output_keys.push_back(&var::get<txout_to_key>(tx_mine_2.vout[0].target).key);
+  output_keys.push_back(&var::get<txout_to_key>(tx_mine_3.vout[0].target).key);
+  output_keys.push_back(&var::get<txout_to_key>(tx_mine_4.vout[0].target).key);
+  output_keys.push_back(&var::get<txout_to_key>(tx_mine_5.vout[0].target).key);
+  output_keys.push_back(&var::get<txout_to_key>(tx_mine_6.vout[0].target).key);
+  r = crypto::check_ring_signature(pref_hash, var::get<txin_to_key>(tx_rc1.vin[0]).k_image, output_keys, &tx_rc1.signatures[0][0]);
   CHECK_AND_ASSERT_MES(r, false, "failed to check ring signature");
 
   std::vector<size_t> outs;
@@ -140,7 +139,7 @@ bool test_block_creation()
   bool r = get_account_address_from_str(info, MAINNET, "0099be99c70ef10fd534c43c88e9d13d1c8853213df7e362afbec0e4ee6fec4948d0c190b58f4b356cd7feaf8d9d0a76e7c7e5a9a0a497a6b1faf7a765882dd08ac2");
   CHECK_AND_ASSERT_MES(r, false, "failed to import");
   block b;
-  r = construct_miner_tx(90, epee::misc_utils::median(szs), 3553616528562147, 33094, 10000000, info.address, b.miner_tx, blobdata());
+  r = construct_miner_tx(90, epee::misc_utils::median(szs), 3553616528562147, 33094, 10000000, b.miner_tx, cryptonote::beldex_miner_tx_context::miner_block(cryptonote::FAKECHAIN, info.address), blobdata());
   return r;
 }
 

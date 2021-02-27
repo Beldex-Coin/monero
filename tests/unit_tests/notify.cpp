@@ -32,11 +32,9 @@
 
 #include "gtest/gtest.h"
 
-#include <boost/filesystem.hpp>
-
-#include "misc_language.h"
-#include "string_tools.h"
-#include "file_io_utils.h"
+#include "epee/misc_language.h"
+#include "epee/string_tools.h"
+#include "common/file.h"
 #include "common/notify.h"
 
 TEST(notify, works)
@@ -75,16 +73,15 @@ TEST(notify, works)
     epee::misc_utils::sleep_no_w(100);
 
     std::string s;
-    if (epee::file_io_utils::load_file_to_string(name_template, s))
+    if (tools::slurp_file(name_template, s))
     {
       if (s == "1111111111111111111111111111111111111111111111111111111111111111")
       {
         ok = true;
         break;
       }
-      std::cout << "got: [" << s << "]" << std::endl;
     }
   }
-  boost::filesystem::remove(name_template);
+  fs::remove(name_template);
   ASSERT_TRUE(ok);
 }

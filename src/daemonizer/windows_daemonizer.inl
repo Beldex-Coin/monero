@@ -30,13 +30,12 @@
 #pragma once
 
 #include "common/util.h"
+#include "common/file.h"
 #include "daemonizer/windows_service.h"
 #include "daemonizer/windows_service_runner.h"
 #include "cryptonote_core/cryptonote_core.h"
 
 #include <shlobj.h>
-#include <boost/filesystem/operations.hpp>
-#include <boost/filesystem/path.hpp>
 
 namespace daemonizer
 {
@@ -62,6 +61,10 @@ namespace daemonizer
       "run-as-service"
     , "Hidden -- true if running as windows service"
     };
+    const command_line::arg_descriptor<bool> arg_non_interactive = {
+      "non-interactive"
+    , "Run non-interactive"
+    };
 
     std::string get_argument_string(int argc, char const * argv[])
     {
@@ -84,9 +87,10 @@ namespace daemonizer
     command_line::add_arg(normal_options, arg_start_service);
     command_line::add_arg(normal_options, arg_stop_service);
     command_line::add_arg(hidden_options, arg_is_service);
+    command_line::add_arg(hidden_options, arg_non_interactive);
   }
 
-  inline boost::filesystem::path get_default_data_dir()
+  inline fs::path get_default_data_dir()
   {
     bool admin;
     if (!windows::check_admin(admin))
@@ -95,19 +99,19 @@ namespace daemonizer
     }
     if (admin)
     {
-      return boost::filesystem::absolute(
-          tools::get_special_folder_path(CSIDL_COMMON_APPDATA, true) + "\\" + CRYPTONOTE_NAME
+      return fs::absolute(
+          tools::get_special_folder_path(CSIDL_COMMON_APPDATA, true) / CRYPTONOTE_NAME
         );
     }
     else
     {
-      return boost::filesystem::absolute(
-          tools::get_special_folder_path(CSIDL_APPDATA, true) + "\\" + CRYPTONOTE_NAME
+      return fs::absolute(
+          tools::get_special_folder_path(CSIDL_APPDATA, true) / CRYPTONOTE_NAME
         );
     }
   }
 
-  inline boost::filesystem::path get_relative_path_base(
+  inline fs::path get_relative_path_base(
       boost::program_options::variables_map const & vm
     )
   {
@@ -124,26 +128,22 @@ namespace daemonizer
     }
     else
     {
-      return boost::filesystem::current_path();
+      return fs::current_path();
     }
   }
 
-  template <typename T_executor>
-  inline bool daemonize(
-      int argc, char const * argv[]
-    , T_executor && executor // universal ref
-    , boost::program_options::variables_map const & vm
-    )
+  template <typename Application, typename... Args>
+  bool daemonize(
+      const char* name, int argc, const char* argv[],
+      boost::program_options::variables_map vm,
+      Args&&... args)
   {
     std::string arguments = get_argument_string(argc, argv);
 
     if (command_line::has_arg(vm, arg_is_service))
     {
-      // TODO - Set the service status here for return codes
-      windows::t_service_runner<typename T_executor::t_daemon>::run(
-        executor.name()
-      , executor.create_daemon(vm)
-      );
+      windows::service_runner<Application> runner{name, std::move(vm), std::forward<Args>(args)...};
+      runner.run();
       return true;
     }
     else if (command_line::has_arg(vm, arg_install_service))
@@ -151,36 +151,29 @@ namespace daemonizer
       if (windows::ensure_admin(arguments))
       {
         arguments += " --run-as-service";
-        return windows::install_service(executor.name(), arguments);
+        return windows::install_service(name, arguments);
       }
     }
     else if (command_line::has_arg(vm, arg_uninstall_service))
     {
       if (windows::ensure_admin(arguments))
-      {
-        return windows::uninstall_service(executor.name());
-      }
+        return windows::uninstall_service(name);
     }
     else if (command_line::has_arg(vm, arg_start_service))
     {
       if (windows::ensure_admin(arguments))
-      {
-        return windows::start_service(executor.name());
-      }
+        return windows::start_service(name);
     }
     else if (command_line::has_arg(vm, arg_stop_service))
     {
       if (windows::ensure_admin(arguments))
-      {
-        return windows::stop_service(executor.name());
-      }
+        return windows::stop_service(name);
     }
-    else // interactive
+    else
     {
-      //LOG_PRINT_L0("Beldex '" << BELDEX_RELEASE_NAME << "' (v" << BELDEX_VERSION_FULL);
-      return executor.run_interactive(vm);
+      bool interactive = !command_line::has_arg(vm, arg_non_interactive);
+      return Application{std::move(vm), std::forward<Args>(args)...}.run(interactive);
     }
-
     return false;
   }
 }

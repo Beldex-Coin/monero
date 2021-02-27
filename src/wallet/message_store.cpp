@@ -1,4 +1,4 @@
-// Copyright (c) 2018, The Monero Project
+// Copyright (c) 2019, The Monero Project
 //
 // All rights reserved.
 //
@@ -33,13 +33,12 @@
 #include <boost/algorithm/string.hpp>
 #include <fstream>
 #include <sstream>
-#include "file_io_utils.h"
-#include "storages/http_abstract_invoke.h"
 #include "wallet_errors.h"
 #include "serialization/binary_utils.h"
 #include "common/base58.h"
 #include "common/util.h"
-#include "string_tools.h"
+#include "common/file.h"
+#include "epee/string_tools.h"
 
 
 #undef BELDEX_DEFAULT_LOG_CATEGORY
@@ -121,24 +120,24 @@ void message_store::set_options(const std::string &bitmessage_address, const epe
 
 void message_store::set_signer(const multisig_wallet_state &state,
                                uint32_t index,
-                               const boost::optional<std::string> &label,
-                               const boost::optional<std::string> &transport_address,
-                               const boost::optional<cryptonote::account_public_address> monero_address)
+                               const std::optional<std::string> &label,
+                               const std::optional<std::string> &transport_address,
+                               const std::optional<cryptonote::account_public_address> monero_address)
 {
   THROW_WALLET_EXCEPTION_IF(index >= m_num_authorized_signers, tools::error::wallet_internal_error, "Invalid signer index " + std::to_string(index));
   authorized_signer &m = m_signers[index];
   if (label)
   {
-    m.label = label.get();
+    m.label = *label;
   }
   if (transport_address)
   {
-    m.transport_address = transport_address.get();
+    m.transport_address = *transport_address;
   }
   if (monero_address)
   {
     m.monero_address_known = true;
-    m.monero_address = monero_address.get();
+    m.monero_address = *monero_address;
   }
   // Save to minimize the chance to loose that info (at least while in beta)
   save(state);
@@ -337,7 +336,7 @@ std::string message_store::create_auto_config_token()
   const crypto::hash &hash = crypto::cn_fast_hash(token_bytes.data(), token_bytes.size());
   token_bytes += hash.data[0];
   std::string prefix(AUTO_CONFIG_TOKEN_PREFIX);
-  return prefix + epee::string_tools::buff_to_hex_nodelimer(token_bytes);
+  return prefix + oxenmq::to_hex(token_bytes);
 }
 
 // Add a message for sending "me" address data to the auto-config transport address
@@ -397,10 +396,9 @@ void message_store::stop_auto_config()
   for (uint32_t i = 0; i < m_num_authorized_signers; ++i)
   {
     authorized_signer &m = m_signers[i];
-    if (!m.me && !m.auto_config_transport_address.empty())
+    if (!m.auto_config_transport_address.empty())
     {
-      // Try to delete those "unused API" addresses in PyBitmessage, especially since
-      // it seems it's not possible to delete them interactively, only to "disable" them
+      // Try to delete the chan that was used for auto-config
       m_transporter.delete_transport_address(m.auto_config_transport_address);
     }
     m.auto_config_token.clear();
@@ -429,14 +427,7 @@ void message_store::setup_signer_for_auto_config(uint32_t index, const std::stri
   m.auto_config_token = token;
   crypto::hash_to_scalar(token.data(), token.size(), m.auto_config_secret_key);
   crypto::secret_key_to_public_key(m.auto_config_secret_key, m.auto_config_public_key);
-  if (receiving)
-  {
-    m.auto_config_transport_address = m_transporter.derive_and_receive_transport_address(m.auto_config_token);
-  }
-  else
-  {
-    m.auto_config_transport_address = m_transporter.derive_transport_address(m.auto_config_token);
-  }
+  m.auto_config_transport_address = m_transporter.derive_transport_address(m.auto_config_token);
 }
 
 bool message_store::get_signer_index_by_monero_address(const cryptonote::account_public_address &monero_address, uint32_t &index) const
@@ -697,7 +688,7 @@ void message_store::get_sanitized_message_text(const message &m, std::string &sa
   }
 }
 
-void message_store::write_to_file(const multisig_wallet_state &state, const std::string &filename)
+void message_store::write_to_file(const multisig_wallet_state &state, const fs::path &filename)
 {
   std::stringstream oss;
   boost::archive::portable_binary_oarchive ar(oss);
@@ -707,7 +698,7 @@ void message_store::write_to_file(const multisig_wallet_state &state, const std:
   crypto::chacha_key key;
   crypto::generate_chacha_key(&state.view_secret_key, sizeof(crypto::secret_key), key, 1);
 
-  file_data write_file_data = boost::value_initialized<file_data>();
+  file_data write_file_data{};
   write_file_data.magic_string = "MMS";
   write_file_data.file_version = 0;
   write_file_data.iv = crypto::rand<crypto::chacha_iv>();
@@ -720,24 +711,22 @@ void message_store::write_to_file(const multisig_wallet_state &state, const std:
   boost::archive::portable_binary_oarchive file_ar(file_oss);
   file_ar << write_file_data;
 
-  bool success = epee::file_io_utils::save_string_to_file(filename, file_oss.str());
+  bool success = tools::dump_file(filename, file_oss.str());
   THROW_WALLET_EXCEPTION_IF(!success, tools::error::file_save_error, filename);
 }
 
-void message_store::read_from_file(const multisig_wallet_state &state, const std::string &filename)
+void message_store::read_from_file(const multisig_wallet_state &state, const fs::path &filename)
 {
-  boost::system::error_code ignored_ec;
-  bool file_exists = boost::filesystem::exists(filename, ignored_ec);
-  if (!file_exists)
+  if (std::error_code ec; !fs::exists(filename, ec))
   {
     // Simply do nothing if the file is not there; allows e.g. easy recovery
     // from problems with the MMS by deleting the file
-    MERROR("No message store file found: " << filename);
+    MINFO("No message store file found: " << filename);
     return;
   }
 
   std::string buf;
-  bool success = epee::file_io_utils::load_file_to_string(filename, buf);
+  bool success = tools::slurp_file(filename, buf);
   THROW_WALLET_EXCEPTION_IF(!success, tools::error::file_read_error, filename);
 
   file_data read_file_data;
@@ -1204,7 +1193,7 @@ void message_store::send_message(const multisig_wallet_state &state, uint32_t id
   message &m = get_message_ref_by_id(id);
   const authorized_signer &me = m_signers[0];
   const authorized_signer &receiver = m_signers[m.signer_index];
-  transport_message dm;
+  transport_message dm{};
   crypto::public_key public_key;
 
   dm.timestamp = (uint64_t)time(NULL);

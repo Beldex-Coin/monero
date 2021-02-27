@@ -31,7 +31,6 @@
 #include "chaingen.h"
 #include "ring_signature_1.h"
 
-using namespace epee;
 using namespace cryptonote;
 
 
@@ -40,8 +39,8 @@ using namespace cryptonote;
 
 gen_ring_signature_1::gen_ring_signature_1()
 {
-  REGISTER_CALLBACK("check_balances_1", gen_ring_signature_1::check_balances_1);
-  REGISTER_CALLBACK("check_balances_2", gen_ring_signature_1::check_balances_2);
+  REGISTER_CALLBACK(check_balances_1);
+  REGISTER_CALLBACK(check_balances_2);
 }
 
 namespace
@@ -54,44 +53,43 @@ namespace
 
 bool gen_ring_signature_1::generate(std::vector<test_event_entry>& events) const
 {
-  const get_test_options<gen_ring_signature_1> test_options = {};
-  linear_chain_generator gen(events, test_options.hard_forks);
-  gen.create_genesis_block();
+  const get_test_options<gen_ring_signature_1> test_options;
+  beldex_chain_generator gen(events, test_options.hard_forks);
 
   const auto miner = gen.first_miner();
-  const auto bob = gen.create_account(); /// event 1
-  const auto alice = gen.create_account(); /// event 2
-  const auto some_account_1 = gen.create_account();
-  const auto some_account_2 = gen.create_account();
+  const auto bob = gen.add_account(); /// event 1
+  const auto alice = gen.add_account(); /// event 2
+  const auto some_account_1 = gen.add_account();
+  const auto some_account_2 = gen.add_account();
 
   /// give the miner some outputs to spend and ulock them
-  gen.rewind_blocks_n(20);
-  gen.rewind_blocks();
+  gen.add_n_blocks(20);
+  gen.add_mined_money_unlock_blocks();
 
   std::vector<cryptonote::transaction> txs;
-  txs.push_back( gen.create_tx(miner, bob, MK_COINS(1)) );
-  txs.push_back( gen.create_tx(miner, bob, MK_COINS(11) + rnd_11) );
+  txs.push_back( gen.create_and_add_tx(miner, bob.get_keys().m_account_address, MK_COINS(1)) );
+  txs.push_back( gen.create_and_add_tx(miner, bob.get_keys().m_account_address, MK_COINS(11) + rnd_11) );
 
-  txs.push_back( gen.create_tx(miner, bob, MK_COINS(11) + rnd_11) );
-  txs.push_back( gen.create_tx(miner, bob, MK_COINS(20) + rnd_20) );
-  txs.push_back( gen.create_tx(miner, bob, MK_COINS(29) + rnd_29) );
-  txs.push_back( gen.create_tx(miner, bob, MK_COINS(29) + rnd_29) );
-  txs.push_back( gen.create_tx(miner, bob, MK_COINS(29) + rnd_29) );
-  txs.push_back( gen.create_tx(miner, some_account_1, MK_COINS(11) + rnd_11) );
-  txs.push_back( gen.create_tx(miner, some_account_1, MK_COINS(11) + rnd_11) );
-  txs.push_back( gen.create_tx(miner, some_account_1, MK_COINS(11) + rnd_11) );
-  txs.push_back( gen.create_tx(miner, some_account_1, MK_COINS(11) + rnd_11) );
-  txs.push_back( gen.create_tx(miner, some_account_1, MK_COINS(20) + rnd_20) );
-  txs.push_back( gen.create_tx(miner, some_account_2, MK_COINS(20) + rnd_20) );
+  txs.push_back( gen.create_and_add_tx(miner, bob.get_keys().m_account_address, MK_COINS(11) + rnd_11) );
+  txs.push_back( gen.create_and_add_tx(miner, bob.get_keys().m_account_address, MK_COINS(20) + rnd_20) );
+  txs.push_back( gen.create_and_add_tx(miner, bob.get_keys().m_account_address, MK_COINS(29) + rnd_29) );
+  txs.push_back( gen.create_and_add_tx(miner, bob.get_keys().m_account_address, MK_COINS(29) + rnd_29) );
+  txs.push_back( gen.create_and_add_tx(miner, bob.get_keys().m_account_address, MK_COINS(29) + rnd_29) );
+  txs.push_back( gen.create_and_add_tx(miner, some_account_1.get_keys().m_account_address, MK_COINS(11) + rnd_11) );
+  txs.push_back( gen.create_and_add_tx(miner, some_account_1.get_keys().m_account_address, MK_COINS(11) + rnd_11) );
+  txs.push_back( gen.create_and_add_tx(miner, some_account_1.get_keys().m_account_address, MK_COINS(11) + rnd_11) );
+  txs.push_back( gen.create_and_add_tx(miner, some_account_1.get_keys().m_account_address, MK_COINS(11) + rnd_11) );
+  txs.push_back( gen.create_and_add_tx(miner, some_account_1.get_keys().m_account_address, MK_COINS(20) + rnd_20) );
+  txs.push_back( gen.create_and_add_tx(miner, some_account_2.get_keys().m_account_address, MK_COINS(20) + rnd_20) );
 
-  gen.create_block(txs);
+  gen.create_and_add_next_block(txs);
 
-  gen.rewind_blocks();
+  gen.add_mined_money_unlock_blocks();
 
   DO_CALLBACK(events, "check_balances_1");
 
-  auto tx = gen.create_tx(bob, alice, MK_COINS(129) + 2 * rnd_11 + rnd_20 + 3 * rnd_29 - TESTS_DEFAULT_FEE);
-  gen.create_block({tx});
+  auto tx = gen.create_and_add_tx(bob, alice.get_keys().m_account_address, MK_COINS(129) + 2 * rnd_11 + rnd_20 + 3 * rnd_29 - TESTS_DEFAULT_FEE);
+  gen.create_and_add_next_block({tx});
 
   DO_CALLBACK(events, "check_balances_2");
 
@@ -102,8 +100,8 @@ bool gen_ring_signature_1::check_balances_1(cryptonote::core& c, size_t ev_index
 {
   DEFINE_TESTS_ERROR_CONTEXT("gen_ring_signature_1::check_balances_1");
 
-  m_bob_account = boost::get<account_base>(events[1]);
-  m_alice_account = boost::get<account_base>(events[2]);
+  m_bob_account = var::get<account_base>(events[2]);
+  m_alice_account = var::get<account_base>(events[3]);
 
   std::vector<block> blocks;
   bool r = c.get_blocks(0, 1000, blocks);
@@ -143,8 +141,8 @@ bool gen_ring_signature_1::check_balances_2(cryptonote::core& c, size_t ev_index
 
 gen_ring_signature_2::gen_ring_signature_2()
 {
-  REGISTER_CALLBACK("check_balances_1", gen_ring_signature_2::check_balances_1);
-  REGISTER_CALLBACK("check_balances_2", gen_ring_signature_2::check_balances_2);
+  REGISTER_CALLBACK(check_balances_1);
+  REGISTER_CALLBACK(check_balances_2);
 }
 
 /**
@@ -184,8 +182,8 @@ bool gen_ring_signature_2::check_balances_1(cryptonote::core& c, size_t ev_index
 {
   DEFINE_TESTS_ERROR_CONTEXT("gen_ring_signature_2::check_balances_1");
 
-  m_bob_account = boost::get<account_base>(events[1]);
-  m_alice_account = boost::get<account_base>(events[2]);
+  m_bob_account = var::get<account_base>(events[1]);
+  m_alice_account = var::get<account_base>(events[2]);
 
   std::vector<block> blocks;
   bool r = c.get_blocks(0, 100 + 3 * CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW, blocks);
@@ -227,8 +225,8 @@ gen_ring_signature_big::gen_ring_signature_big()
   : m_test_size(100)
   , m_tx_amount(MK_COINS(29))
 {
-  REGISTER_CALLBACK("check_balances_1", gen_ring_signature_big::check_balances_1);
-  REGISTER_CALLBACK("check_balances_2", gen_ring_signature_big::check_balances_2);
+  REGISTER_CALLBACK(check_balances_1);
+  REGISTER_CALLBACK(check_balances_2);
 }
 
 /**
@@ -261,7 +259,7 @@ bool gen_ring_signature_big::generate(std::vector<test_event_entry>& events) con
   blocks.push_back(blk_0);
   for (size_t i = blk_0r_idx; i < events.size(); ++i)
   {
-    blocks.push_back(boost::get<block>(events[i]));
+    blocks.push_back(var::get<block>(events[i]));
   }
 
   for (size_t i = 0; i < m_test_size; ++i)
@@ -294,8 +292,8 @@ bool gen_ring_signature_big::check_balances_1(cryptonote::core& c, size_t ev_ind
 {
   DEFINE_TESTS_ERROR_CONTEXT("gen_ring_signature_big::check_balances_1");
 
-  m_bob_account = boost::get<account_base>(events[1]);
-  m_alice_account = boost::get<account_base>(events[1 + m_test_size]);
+  m_bob_account = var::get<account_base>(events[1]);
+  m_alice_account = var::get<account_base>(events[1 + m_test_size]);
 
   std::vector<block> blocks;
   bool r = c.get_blocks(0, 2 * m_test_size + CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW, blocks);
@@ -310,7 +308,7 @@ bool gen_ring_signature_big::check_balances_1(cryptonote::core& c, size_t ev_ind
 
   for (size_t i = 2; i < 1 + m_test_size; ++i)
   {
-    const account_base& an_account = boost::get<account_base>(events[i]);
+    const account_base& an_account = var::get<account_base>(events[i]);
     uint64_t balance = m_tx_amount + TESTS_DEFAULT_FEE * i;
     CHECK_EQ(balance, get_balance(an_account, chain, mtx));
   }
@@ -335,15 +333,15 @@ bool gen_ring_signature_big::check_balances_2(cryptonote::core& c, size_t ev_ind
 
   for (size_t i = 2; i < 1 + m_test_size; ++i)
   {
-    const account_base& an_account = boost::get<account_base>(events[i]);
+    const account_base& an_account = var::get<account_base>(events[i]);
     uint64_t balance = m_tx_amount + TESTS_DEFAULT_FEE * i;
     CHECK_EQ(balance, get_balance(an_account, chain, mtx));
   }
 
   std::vector<size_t> tx_outs;
   uint64_t transfered;
-  const transaction& tx = boost::get<transaction>(events[events.size() - 3]);
-  lookup_acc_outs(m_alice_account.get_keys(), boost::get<transaction>(events[events.size() - 3]), get_tx_pub_key_from_extra(tx), get_additional_tx_pub_keys_from_extra(tx), tx_outs, transfered);
+  const transaction& tx = var::get<transaction>(events[events.size() - 3]);
+  lookup_acc_outs(m_alice_account.get_keys(), var::get<transaction>(events[events.size() - 3]), get_tx_pub_key_from_extra(tx), get_additional_tx_pub_keys_from_extra(tx), tx_outs, transfered);
   CHECK_EQ(m_tx_amount, transfered);
 
   return true;

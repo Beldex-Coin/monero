@@ -26,11 +26,17 @@
 // STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <boost/optional/optional.hpp>
-#include <string.h>
-#include "memwipe.h"
-#include "misc_log_ex.h"
-#include "wipeable_string.h"
+#include <optional>
+#include <cctype>
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+#include <cstring>
+#include "epee/memwipe.h"
+#include "epee/misc_log_ex.h"
+#include "epee/wipeable_string.h"
 
 static constexpr const char hex[] = u8"0123456789abcdef";
 
@@ -62,13 +68,15 @@ wipeable_string::wipeable_string(wipeable_string &&other)
 wipeable_string::wipeable_string(const std::string &other)
 {
   grow(other.size());
-  memcpy(buffer.data(), other.c_str(), size());
+  if (size() > 0)
+    memcpy(buffer.data(), other.c_str(), size());
 }
 
 wipeable_string::wipeable_string(std::string &&other)
 {
   grow(other.size());
-  memcpy(buffer.data(), other.c_str(), size());
+  if (size() > 0)
+    memcpy(buffer.data(), other.c_str(), size());
   if (!other.empty())
   {
     memwipe(&other[0], other.size()); // we're kinda left with this again aren't we
@@ -79,7 +87,8 @@ wipeable_string::wipeable_string(std::string &&other)
 wipeable_string::wipeable_string(const char *s)
 {
   grow(strlen(s));
-  memcpy(buffer.data(), s, size());
+  if (size() > 0)
+    memcpy(buffer.data(), s, size());
 }
 
 wipeable_string::wipeable_string(const char *s, size_t len)
@@ -112,14 +121,18 @@ void wipeable_string::grow(size_t sz, size_t reserved)
   }
   size_t old_sz = buffer.size();
   std::unique_ptr<char[]> tmp{new char[old_sz]};
-  memcpy(tmp.get(), buffer.data(), old_sz * sizeof(char));
   if (old_sz > 0)
+  {
+    memcpy(tmp.get(), buffer.data(), old_sz * sizeof(char));
     memwipe(buffer.data(), old_sz * sizeof(char));
+  }
   buffer.reserve(reserved);
   buffer.resize(sz);
-  memcpy(buffer.data(), tmp.get(), old_sz * sizeof(char));
   if (old_sz > 0)
+  {
+    memcpy(buffer.data(), tmp.get(), old_sz * sizeof(char));
     memwipe(tmp.get(), old_sz * sizeof(char));
+  }
 }
 
 void wipeable_string::push_back(char c)
@@ -181,21 +194,22 @@ void wipeable_string::split(std::vector<wipeable_string> &fields) const
   while (len--)
   {
     const char c = *ptr++;
-    if (c != ' ')
+    const bool space_prev = space;
+    space = std::isspace(c);
+    if (!space)
     {
-      if (space)
+      if (space_prev)
         fields.push_back({});
       fields.back().push_back(c);
     }
-    space = c == ' ';
   }
 }
 
-boost::optional<epee::wipeable_string> wipeable_string::parse_hexstr() const
+std::optional<epee::wipeable_string> wipeable_string::parse_hexstr() const
 {
   if (size() % 2 != 0)
-    return boost::none;
-  boost::optional<epee::wipeable_string> res = epee::wipeable_string("");
+    return std::nullopt;
+  std::optional<epee::wipeable_string> res = epee::wipeable_string("");
   const size_t len = size();
   const char *d = data();
   res->grow(0, len / 2);
@@ -204,11 +218,11 @@ boost::optional<epee::wipeable_string> wipeable_string::parse_hexstr() const
     char c = atolower(d[i]);
     const char *ptr0 = strchr(hex, c);
     if (!ptr0)
-      return boost::none;
+      return std::nullopt;
     c = atolower(d[i+1]);
     const char *ptr1 = strchr(hex, c);
     if (!ptr1)
-      return boost::none;
+      return std::nullopt;
     res->push_back(((ptr0-hex)<<4) | (ptr1-hex));
   }
   return res;

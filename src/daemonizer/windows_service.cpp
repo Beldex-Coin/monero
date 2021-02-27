@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -26,15 +26,12 @@
 // STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <boost/chrono/chrono.hpp>
-#include <boost/thread/thread.hpp>
-
 #undef UNICODE
 #undef _UNICODE
 
 #include "common/scoped_message_writer.h"
 #include "daemonizer/windows_service.h"
-#include "string_tools.h"
+#include "epee/string_tools.h"
 #include <chrono>
 #include <iostream>
 #include <utility>
@@ -44,6 +41,8 @@
 #include <windows.h>
 
 namespace windows {
+
+using namespace std::literals;
 
 namespace {
   typedef std::unique_ptr<std::remove_pointer<SC_HANDLE>::type, decltype(&::CloseServiceHandle)> service_handle;
@@ -103,8 +102,7 @@ namespace {
   // to allow the user to read any output.
   void pause_to_display_admin_window_messages()
   {
-    boost::chrono::milliseconds how_long{1500};
-    boost::this_thread::sleep_for(how_long);
+    std::this_thread::sleep_for(1500ms);
   }
 }
 
@@ -166,10 +164,7 @@ bool ensure_admin(
   }
 }
 
-bool install_service(
-    std::string const & service_name
-  , std::string const & arguments
-  )
+bool install_service(char const *service_name, std::string const &arguments)
 {
   std::string command = epee::string_tools::get_current_module_path();
   std::string full_command = command + arguments;
@@ -191,8 +186,8 @@ bool install_service(
   service_handle p_service{
     CreateService(
         p_manager.get()
-      , service_name.c_str()
-      , service_name.c_str()
+      , service_name
+      , service_name
       , 0
       //, GENERIC_EXECUTE | GENERIC_READ
       , SERVICE_WIN32_OWN_PROCESS
@@ -221,9 +216,7 @@ bool install_service(
   return true;
 }
 
-bool start_service(
-    std::string const & service_name
-  )
+bool start_service(char const *service_name)
 {
   tools::msg_writer() << "Starting service";
 
@@ -247,7 +240,7 @@ bool start_service(
   service_handle p_service{
     OpenService(
         p_manager.get()
-      , service_name.c_str()
+      , service_name
       //, SERVICE_START | SERVICE_QUERY_STATUS
       , SERVICE_START
       )
@@ -276,9 +269,7 @@ bool start_service(
   return true;
 }
 
-bool stop_service(
-    std::string const & service_name
-  )
+bool stop_service(char const *service_name)
 {
   tools::msg_writer() << "Stopping service";
 
@@ -299,7 +290,7 @@ bool stop_service(
   service_handle p_service{
     OpenService(
         p_manager.get()
-      , service_name.c_str()
+      , service_name
       , SERVICE_STOP | SERVICE_QUERY_STATUS
       )
   , &::CloseServiceHandle
@@ -324,9 +315,7 @@ bool stop_service(
   return true;
 }
 
-bool uninstall_service(
-    std::string const & service_name
-  )
+bool uninstall_service(char const *service_name)
 {
   service_handle p_manager{
     OpenSCManager(
@@ -345,7 +334,7 @@ bool uninstall_service(
   service_handle p_service{
     OpenService(
         p_manager.get()
-      , service_name.c_str()
+      , service_name
       , SERVICE_QUERY_STATUS | DELETE
       )
   , &::CloseServiceHandle

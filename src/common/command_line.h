@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -31,7 +31,6 @@
 #pragma once
 
 #include <functional>
-#include <iostream>
 #include <sstream>
 #include <array>
 #include <type_traits>
@@ -39,17 +38,30 @@
 #include <boost/program_options/parsers.hpp>
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/variables_map.hpp>
-#include "include_base_utils.h"
+#include "epee/misc_log_ex.h"
+#include "common/string_util.h"
+#include "common/i18n.h"
 
 namespace command_line
 {
+  inline const char* tr(const char* str) { return i18n_translate(str, "command_line"); }
 
-  //! \return True if `str` is `is_iequal("y" || "yes" || `tr("yes"))`.
-  bool is_yes(const std::string& str);
-  //! \return True if `str` is `is_iequal("n" || "no" || `tr("no"))`.
-  bool is_no(const std::string& str);
-  bool is_cancel(const std::string& str);
-  bool is_back(const std::string& str);
+  /// @return True if `str` is (case-insensitively) y, yes, a potentially translated yes, or any of
+  /// the optional extra arguments passed in.
+  template <typename S, typename... More>
+  bool is_yes(const S& str, const More&... more) { return tools::string_iequal_any(str, "y", "yes", tr("yes"), more...); }
+  /// @return True if `str` is (case-insensitively) n, no, or a potentially translated no, or any of
+  /// the optional extra arguments passed in.
+  template <typename S, typename... More>
+  bool is_no(const S& str, const More&... more) { return tools::string_iequal_any(str, "n", "no", tr("no"), more...); }
+  /// @return True if `str` is (case-insensitively) c, cancel, or a potentially translated cancel,
+  /// or any of the optional extra arguments passed in.
+  template <typename S, typename... More>
+  bool is_cancel(const S& str, const More&... more) { return tools::string_iequal_any(str, "c", "cancel", tr("cancel"), more...); }
+  /// @return True if `str` is (case-insensitively) b, back, or a potentially translated back, or
+  /// any of the optional extra arguments passed in.
+  template <typename S, typename... More>
+  bool is_back(const S& str, const More&... more) { return tools::string_iequal_any(str, "b", "back", tr("back"), more...); }
 
   template<typename T, bool required = false, bool dependent = false, int NUM_DEPS = 1>
   struct arg_descriptor;
@@ -57,7 +69,7 @@ namespace command_line
   template<typename T>
   struct arg_descriptor<T, false>
   {
-    typedef T value_type;
+    using value_type = T;
 
     const char* name;
     const char* description;
@@ -66,20 +78,11 @@ namespace command_line
   };
 
   template<typename T>
-  struct arg_descriptor<std::vector<T>, false>
-  {
-    typedef std::vector<T> value_type;
-
-    const char* name;
-    const char* description;
-  };
-
-  template<typename T>
   struct arg_descriptor<T, true>
   {
-    static_assert(!std::is_same<T, bool>::value, "Boolean switch can't be required");
+    static_assert(!std::is_same_v<T, bool>, "Boolean switch can't be required");
 
-    typedef T value_type;
+    using value_type = T;
 
     const char* name;
     const char* description;
@@ -88,7 +91,7 @@ namespace command_line
   template<typename T>
   struct arg_descriptor<T, false, true>
   {
-    typedef T value_type;
+    using value_type = T;
 
     const char* name;
     const char* description;
@@ -104,7 +107,7 @@ namespace command_line
   template<typename T, int NUM_DEPS>
   struct arg_descriptor<T, false, true, NUM_DEPS>
   {
-    typedef T value_type;
+    using value_type = T;
 
     const char* name;
     const char* description;
@@ -132,14 +135,37 @@ namespace command_line
     return semantic;
   }
 
+  namespace {
+    template <typename T>
+    struct arg_stringify {
+      const T& v;
+      arg_stringify(const T& val) : v{val} {}
+    };
+    template <typename T>
+    std::ostream& operator<<(std::ostream& o, const arg_stringify<T>& a) {
+      return o << a.v;
+    }
+    template <typename T>
+    std::ostream& operator<<(std::ostream& o, const arg_stringify<std::vector<T>>& a) {
+      o << '{';
+      bool first = true;
+      for (auto& x : a.v) {
+        if (first) first = false;
+        else o << ",";
+        o << x;
+      }
+      return o << '}';
+    }
+  }
+
   template<typename T>
   boost::program_options::typed_value<T, char>* make_semantic(const arg_descriptor<T, false, true>& arg)
   {
     auto semantic = boost::program_options::value<T>();
     if (!arg.not_use_default) {
       std::ostringstream format;
-      format << arg.depf(false, true, arg.default_value) << ", "
-             << arg.depf(true, true, arg.default_value) << " if '"
+      format << arg_stringify{arg.depf(false, true, arg.default_value)} << ", "
+             << arg_stringify{arg.depf(true, true, arg.default_value)} << " if '"
              << arg.ref.name << "'";
       semantic->default_value(arg.depf(arg.ref.default_value, true, arg.default_value), format.str());
     }
@@ -154,12 +180,12 @@ namespace command_line
       std::array<bool, NUM_DEPS> depval;
       depval.fill(false);
       std::ostringstream format;
-      format << arg.depf(depval, true, arg.default_value);
+      format << arg_stringify{arg.depf(depval, true, arg.default_value)};
       for (size_t i = 0; i < depval.size(); ++i)
       {
         depval.fill(false);
         depval[i] = true;
-        format << ", " << arg.depf(depval, true, arg.default_value) << " if '" << arg.ref[i]->name << "'";
+        format << ", " << arg_stringify{arg.depf(depval, true, arg.default_value)} << " if '" << arg.ref[i]->name << "'";
       }
       for (size_t i = 0; i < depval.size(); ++i)
         depval[i] = arg.ref[i]->default_value;
@@ -256,7 +282,7 @@ namespace command_line
   }
 
   template<typename T, bool required, bool dependent, int NUM_DEPS>
-  typename std::enable_if<!std::is_same<T, bool>::value, bool>::type has_arg(const boost::program_options::variables_map& vm, const arg_descriptor<T, required, dependent, NUM_DEPS>& arg)
+  std::enable_if_t<!std::is_same_v<T, bool>, bool> has_arg(const boost::program_options::variables_map& vm, const arg_descriptor<T, required, dependent, NUM_DEPS>& arg)
   {
     auto value = vm[arg.name];
     return !value.empty();
@@ -298,4 +324,16 @@ namespace command_line
 
   extern const arg_descriptor<bool> arg_help;
   extern const arg_descriptor<bool> arg_version;
+
+  /// Returns the terminal width and height (in characters), if supported on this system and
+  /// available.  Returns {0,0} if not available or could not be determined.
+  std::pair<unsigned, unsigned> terminal_size();
+
+  /// Returns the ideal line width and description width values for
+  /// boost::program_options::options_description, using the terminal width (if available).  Returns
+  /// the boost defaults if terminal width isn't available.
+  std::pair<unsigned, unsigned> boost_option_sizes();
+
+  // Clears the screen using readline, if available, otherwise trying some terminal escape hacks.
+  void clear_screen();
 }

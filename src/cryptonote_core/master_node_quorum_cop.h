@@ -28,46 +28,120 @@
 
 #pragma once
 
-#include "blockchain.h"
+#include "serialization/serialization.h"
 #include "cryptonote_protocol/cryptonote_protocol_handler_common.h"
+#include "cryptonote_basic/cryptonote_basic_impl.h"
+#include "cryptonote_core/master_node_voting.h"
+#include <cassert>
+#include <mutex>
 
 namespace cryptonote
 {
   class core;
+  struct vote_verification_context;
+  struct checkpoint_t;
 };
 
 namespace master_nodes
 {
+  struct master_node_info;
+
+  struct quorum
+  {
+    std::vector<crypto::public_key> validators; // Array of public keys identifying master nodes who validate and sign.
+    std::vector<crypto::public_key> workers;    // Array of public keys of tested master nodes (if applicable).
+
+    BEGIN_SERIALIZE()
+      FIELD(validators)
+      FIELD(workers)
+    END_SERIALIZE()
+  };
+
+  inline std::ostream &operator<<(std::ostream &os, quorum const &q)
+  {
+    for (size_t i = 0; i < q.validators.size(); i++) os << "V[" << i << "] " << q.validators[i] << "\n";
+    for (size_t i = 0; i < q.workers.size(); i++) os    << "W[" << i << "] " << q.workers[i] << "\n";
+    return os;
+  }
+
+  struct quorum_manager
+  {
+    std::shared_ptr<const quorum> obligations;
+    // TODO(doyle): Workers aren't used, but I kept this as a quorum
+    // to avoid drastic changes for now to a lot of the master node API
+    std::shared_ptr<const quorum> checkpointing;
+    std::shared_ptr<const quorum> blink;
+    std::shared_ptr<const quorum> pulse;
+
+    std::shared_ptr<const quorum> get(quorum_type type) const
+    {
+      if (type == quorum_type::obligations) return obligations;
+      else if (type == quorum_type::checkpointing) return checkpointing;
+      else if (type == quorum_type::blink) return blink;
+      else if (type == quorum_type::pulse) return pulse;
+      MERROR("Developer error: Unhandled quorum enum with value: " << (size_t)type);
+      assert(!"Developer error: Unhandled quorum enum with value: ");
+      return nullptr;
+    }
+  };
+
+  struct master_node_test_results {
+    bool uptime_proved            = true;
+    bool single_ip                = true;
+    bool checkpoint_participation = true;
+    bool pulse_participation      = true;
+    bool storage_server_reachable = true;
+
+    char const *why() const;
+    bool passed() const { return uptime_proved && checkpoint_participation && pulse_participation && storage_server_reachable; }
+  };
+
   class quorum_cop
-    : public cryptonote::Blockchain::BlockAddedHook,
-      public cryptonote::Blockchain::BlockchainDetachedHook,
-      public cryptonote::Blockchain::InitHook
+    : public cryptonote::BlockAddedHook,
+      public cryptonote::BlockchainDetachedHook,
+      public cryptonote::InitHook
   {
   public:
     explicit quorum_cop(cryptonote::core& core);
 
     void init() override;
-    void block_added(const cryptonote::block& block, const std::vector<cryptonote::transaction>& txs) override;
-    void blockchain_detached(uint64_t height) override;
+    bool block_added(const cryptonote::block& block, const std::vector<cryptonote::transaction>& txs, cryptonote::checkpoint_t const * /*checkpoint*/) override;
+    void blockchain_detached(uint64_t height, bool by_pop_blocks) override;
 
-    bool handle_uptime_proof(const cryptonote::NOTIFY_UPTIME_PROOF::request &proof);
+    void                       set_votes_relayed  (std::vector<quorum_vote_t> const &relayed_votes);
+    std::vector<quorum_vote_t> get_relayable_votes(uint64_t current_height, uint8_t hf_version, bool quorum_relay);
+    bool                       handle_vote        (quorum_vote_t const &vote, cryptonote::vote_verification_context &vvc);
 
-    static const uint64_t REORG_SAFETY_BUFFER_IN_BLOCKS = 20;
-    static_assert(REORG_SAFETY_BUFFER_IN_BLOCKS < deregister_vote::VOTE_LIFETIME_BY_HEIGHT,
-                  "Safety buffer should always be less than the vote lifetime");
-    bool prune_uptime_proof();
-
-    uint64_t get_uptime_proof(const crypto::public_key &pubkey) const;
-
-    void generate_uptime_proof_request(cryptonote::NOTIFY_UPTIME_PROOF::request& req) const;
+    static int64_t calculate_decommission_credit(const master_node_info &info, uint64_t current_height);
 
   private:
+    void process_quorums(cryptonote::block const &block);
+    master_node_test_results check_master_node(uint8_t hf_version, const crypto::public_key &pubkey, const master_node_info &info) const;
 
     cryptonote::core& m_core;
-    uint64_t m_last_height;
-
-    using timestamp = uint64_t;
-    std::unordered_map<crypto::public_key, timestamp> m_uptime_proof_seen;
-    mutable epee::critical_section m_lock;
+    voting_pool       m_vote_pool;
+    uint64_t          m_obligations_height;
+    uint64_t          m_last_checkpointed_height;
+    mutable std::recursive_mutex m_lock;
   };
+
+  int find_index_in_quorum_group(std::vector<crypto::public_key> const &group, const crypto::public_key &my_pubkey);
+
+  /** Calculates a checksum value from the (ordered!) set of pubkeys to casually test whether two
+   * quorums are the same.  (Not meant to be cryptographically secure).
+   *
+   * offset is used to add multiple lists together without having to construct a separate vector,
+   * that is:
+   *
+   *     checksum([a,b,c,d,e])
+   *
+   * and
+   *
+   *     checksum([a,b,c]) + checksum([d,e], 3)
+   *
+   * yield the same result.  Public keys may be null; pubkeys that are skipped via the offset are
+   * equivalent to a null pubkey for skipped entries, and the checksum of [a,b,ZERO] is equal to the
+   * checksum of [a,b] but not equal to [a,ZERO,b].
+   */
+  uint64_t quorum_checksum(const std::vector<crypto::public_key> &pubkeys, size_t offset = 0);
 }

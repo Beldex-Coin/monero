@@ -27,29 +27,17 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-set(gen_multisig_sources
-  gen_multisig.cpp)
+beldex_add_executable(gen_multisig "beldex-gen-trusted-multisig"
+  gen_multisig.cpp
+  )
 
-beldex_add_executable(gen_multisig
-  ${gen_multisig_sources})
 target_link_libraries(gen_multisig
   PRIVATE
     wallet
+    rpc_commands
     cryptonote_core
-    cncrypto
-    common
     epee
-    ${EPEE_READLINE}
-    ${Boost_CHRONO_LIBRARY}
-    ${Boost_PROGRAM_OPTIONS_LIBRARY}
-    ${Boost_FILESYSTEM_LIBRARY}
-    ${Boost_THREAD_LIBRARY}
-    ${CMAKE_THREAD_LIBS_INIT}
-    ${GNU_READLINE_LIBRARY}
-    ${EXTRA_LIBRARIES})
-add_dependencies(gen_multisig
-  version)
-set_property(TARGET gen_multisig
-  PROPERTY
-    OUTPUT_NAME "beldex-gen-trusted-multisig")
-install(TARGETS gen_multisig DESTINATION bin)
+    Boost::program_options
+    filesystem
+    version
+    extra)

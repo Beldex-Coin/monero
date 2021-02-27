@@ -30,30 +30,26 @@
 #pragma once
 
 #include <string>
-#include <stdio.h>
-#include <memory>
-#include "misc_log_ex.h"
+#include <cstdio>
+#include <cstdint>
+#include "epee/misc_log_ex.h"
 
 namespace tools
 {
 
-class PerformanceTimer;
-
 extern el::Level performance_timer_log_level;
-
-uint64_t get_tick_count();
-uint64_t get_ticks_per_ns();
-uint64_t ticks_to_ns(uint64_t ticks);
 
 class PerformanceTimer
 {
 public:
   PerformanceTimer(bool paused = false);
-  ~PerformanceTimer();
   void pause();
   void resume();
   void reset();
   uint64_t value() const;
+  operator uint64_t() const  { return value(); }
+  float milliseconds() const { return value() / 1.0e6; }
+  float seconds() const      { return milliseconds() / 1000.f; }
 
 protected:
   uint64_t ticks;

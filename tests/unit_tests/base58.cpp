@@ -69,7 +69,7 @@ namespace
 
   void do_test_decode_block_pos(const std::string& enc, const std::string& expected)
   {
-    std::string data(base58::decoded_block_sizes::instance(enc.size()), '\0');
+    std::string data(base58::decoded_block_sizes[enc.size()], '\0');
     ASSERT_TRUE(base58::decode_block(enc.data(), enc.size(), &data[0]));
     ASSERT_EQ(data, expected);
   }
@@ -150,18 +150,18 @@ TEST_uint_64_to_8be(0x0102030405060708, "\x1\x2\x3\x4\x5\x6\x7\x8");
 
 TEST(reverse_alphabet, is_correct)
 {
-  ASSERT_EQ(-1, base58::reverse_alphabet::instance(0));
-  ASSERT_EQ(-1, base58::reverse_alphabet::instance(std::numeric_limits<char>::min()));
-  ASSERT_EQ(-1, base58::reverse_alphabet::instance(std::numeric_limits<char>::max()));
-  ASSERT_EQ(-1, base58::reverse_alphabet::instance('1' - 1));
-  ASSERT_EQ(-1, base58::reverse_alphabet::instance('z' + 1));
-  ASSERT_EQ(-1, base58::reverse_alphabet::instance('0'));
-  ASSERT_EQ(-1, base58::reverse_alphabet::instance('I'));
-  ASSERT_EQ(-1, base58::reverse_alphabet::instance('O'));
-  ASSERT_EQ(-1, base58::reverse_alphabet::instance('l'));
-  ASSERT_EQ(0,  base58::reverse_alphabet::instance('1'));
-  ASSERT_EQ(8,  base58::reverse_alphabet::instance('9'));
-  ASSERT_EQ(base58::alphabet_size - 1, base58::reverse_alphabet::instance('z'));
+  ASSERT_EQ(-1, base58::reverse_alphabet[0]);
+  ASSERT_EQ(-1, base58::reverse_alphabet[std::numeric_limits<char>::min()]);
+  ASSERT_EQ(-1, base58::reverse_alphabet[std::numeric_limits<char>::max()]);
+  ASSERT_EQ(-1, base58::reverse_alphabet['1' - 1]);
+  ASSERT_EQ(-1, base58::reverse_alphabet['z' + 1]);
+  ASSERT_EQ(-1, base58::reverse_alphabet['0']);
+  ASSERT_EQ(-1, base58::reverse_alphabet['I']);
+  ASSERT_EQ(-1, base58::reverse_alphabet['O']);
+  ASSERT_EQ(-1, base58::reverse_alphabet['l']);
+  ASSERT_EQ(0,  base58::reverse_alphabet['1']);
+  ASSERT_EQ(8,  base58::reverse_alphabet['9']);
+  ASSERT_EQ(base58::alphabet.size() - 1, base58::reverse_alphabet['z']);
 }
 
 
@@ -473,7 +473,7 @@ namespace
 TEST(get_account_address_as_str, works_correctly)
 {
   cryptonote::account_public_address addr;
-  ASSERT_TRUE(serialization::parse_binary(test_serialized_keys, addr));
+  ASSERT_NO_THROW(serialization::parse_binary(test_serialized_keys, addr));
   std::string addr_str = cryptonote::get_account_address_as_str(cryptonote::MAINNET, false, addr);
   ASSERT_EQ(addr_str, test_keys_addr_str);
 }
@@ -484,7 +484,7 @@ TEST(get_account_address_from_str, handles_valid_address)
   ASSERT_TRUE(cryptonote::get_account_address_from_str(info, cryptonote::MAINNET, test_keys_addr_str));
 
   std::string blob;
-  ASSERT_TRUE(serialization::dump_binary(info.address, blob));
+  ASSERT_NO_THROW(blob = serialization::dump_binary(info.address));
   ASSERT_EQ(blob, test_serialized_keys);
 }
 
@@ -531,10 +531,4 @@ TEST(get_account_address_from_str, fails_on_invalid_address_view_key)
 
   cryptonote::address_parse_info info;
   ASSERT_FALSE(cryptonote::get_account_address_from_str(info, cryptonote::MAINNET, addr_str));
-}
-
-TEST(get_account_address_from_str, parses_old_address_format)
-{
-  cryptonote::address_parse_info info;
-  ASSERT_TRUE(cryptonote::get_account_address_from_str(info, cryptonote::MAINNET, "002391bbbb24dea6fd95232e97594a27769d0153d053d2102b789c498f57a2b00b69cd6f2f5c529c1660f2f4a2b50178d6640c20ce71fe26373041af97c5b10236fc"));
 }

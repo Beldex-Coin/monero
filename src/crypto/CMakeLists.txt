@@ -27,7 +27,7 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-set(crypto_sources
+add_library(cncrypto
   aesb.c
   blake256.c
   chacha.c
@@ -40,54 +40,60 @@ set(crypto_sources
   hash-extra-jh.c
   hash-extra-skein.c
   hash.c
+  hmac-keccak.c
   jh.c
   keccak.c
   oaes_lib.c
   random.c
   skein.c
-  slow-hash.c
-  cn_conceal.cpp
-  tree-hash.c
-  aux_hash.c)
+  cn_heavy_hash_hard_arm.cpp
+  cn_heavy_hash_hard_intel.cpp
+  cn_heavy_hash_soft.cpp
+  cn_turtle_hash.c
+  rx-slow-hash.c
+  tree-hash.c)
 
-set(crypto_headers)
+option(MONERO_SLOW_HASH "Enable support for Monero CNv0/CNv1 hashing (currently only used in the Android wallet). Defaults to disabled because this causes many false alarms in virus/malware detection software." OFF)
+if(MONERO_SLOW_HASH)
+  target_sources(cncrypto PRIVATE cn_monero_slow_hash.c)
+  target_compile_definitions(cncrypto PUBLIC ENABLE_MONERO_SLOW_HASH)
+endif()
 
-set(crypto_private_headers
-  blake256.h
-  chacha.h
-  crypto-ops.h
-  crypto.h
-  generic-ops.h
-  groestl.h
-  groestl_tables.h
-  hash-ops.h
-  hash.h
-  initializer.h
-  jh.h
-  keccak.h
-  oaes_config.h
-  oaes_lib.h
-  random.h
-  skein.h
-  aux_hash.h
-  cn_conceal.hpp
-  skein_port.h
-  soft_aes.hpp
-  coin_algos.hpp)
-
-beldex_private_headers(cncrypto
-  ${crypto_private_headers})
-beldex_add_library(cncrypto
-  ${crypto_sources}
-  ${crypto_headers}
-  ${crypto_private_headers})
 target_link_libraries(cncrypto
   PUBLIC
     epee
-    ${Boost_SYSTEM_LIBRARY}
-    ${SODIUM_LIBRARY}
+    randomx
+    Boost::thread
+    sodium
   PRIVATE
-    ${EXTRA_LIBRARIES})
+    extra)
+
+if (CMAKE_CXX_COMPILER_ID MATCHES Clang OR CMAKE_CXX_COMPILER_ID STREQUAL GNU)
+  # If we're compiling for x86/amd64 then we need to force on -maes -msse2 for the hard intel code:
+  # it has a run-time check to not actually call it if not supported by the running CPU.
+  # Unfortunately CMake sucks for actually reliably giving us the target architecture, so we'll just
+  # try to compile with these flags if the compiler accepts them.
+  include(CheckCXXCompilerFlag)
+  check_cxx_compiler_flag(-msse2 COMPILER_SUPPORTS_SSE2)
+  if(COMPILER_SUPPORTS_SSE2)
+    check_cxx_compiler_flag(-maes COMPILER_SUPPORTS_AES)
+    if(COMPILER_SUPPORTS_AES)
+      set_source_files_properties(cn_heavy_hash_hard_intel.cpp PROPERTIES COMPILE_FLAGS "-maes -msse2")
+      set_source_files_properties(cn_monero_slow_hash.c PROPERTIES COMPILE_FLAGS "-maes -msse2")
+    endif()
+  endif()
+endif()
+
+if (ARCH STREQUAL "armv8-a" AND (CMAKE_CXX_COMPILER_ID MATCHES Clang OR CMAKE_CXX_COMPILER_ID STREQUAL GNU))
+  # Similarly use +crypto extensions for the arm hash code (it also has a run-time check before
+  # enabling).
+  include(CheckCXXCompilerFlag)
+  check_cxx_compiler_flag(-march=armv8-a+crypto COMPILER_SUPPORTS_PLUS_CRYPTO)
+  if (COMPILER_SUPPORTS_PLUS_CRYPTO)
+    set_source_files_properties(cn_heavy_hash_hard_arm.cpp PROPERTIES COMPILE_FLAGS "-march=armv8-a+crypto")
+  endif()
+endif()
+
 
 	if (ARM)
   option(NO_OPTIMIZED_MULTIPLY_ON_ARM
@@ -103,9 +109,6 @@ endif()
 # So this code runs with a 1 MB default stack size. 
 # This will force the use of the heap for the allocation of the scratchpad
 if (ANDROID OR IOS)
-  if( BUILD_GUI_DEPS )
-    add_definitions(-DFORCE_USE_HEAP=1)
-  endif()
+  target_compile_definitions(cncrypto PUBLIC FORCE_USE_HEAP=1)
 endif()
-
 

@@ -29,208 +29,349 @@
 //
 // Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
+#include <boost/asio/ip/address.hpp>
 #include <memory>
 #include <stdexcept>
-#include <boost/algorithm/string/split.hpp>
-#include "misc_log_ex.h"
-#include "daemon/daemon.h"
-#include "rpc/daemon_handler.h"
-#include "rpc/zmq_server.h"
+#include <oxenmq/oxenmq.h>
+#include <utility>
+
+#include "cryptonote_config.h"
+#include "cryptonote_core/cryptonote_core.h"
+#include "epee/misc_log_ex.h"
+#if defined(PER_BLOCK_CHECKPOINT)
+#include "blocks/blocks.h"
+#endif
+#include "rpc/rpc_args.h"
+#include "rpc/http_server.h"
+#include "rpc/lmq_server.h"
+#include "cryptonote_protocol/quorumnet.h"
 
 #include "common/password.h"
-#include "common/util.h"
-#include "daemon/core.h"
-#include "daemon/p2p.h"
-#include "daemon/protocol.h"
-#include "daemon/rpc.h"
-#include "daemon/command_server.h"
+#include "common/signal_handler.h"
 #include "daemon/command_server.h"
 #include "daemon/command_line_args.h"
+#include "net/parse.h"
 #include "version.h"
 
-using namespace epee;
+#include "command_server.h"
+#include "daemon.h"
 
 #include <functional>
+
+#ifdef ENABLE_SYSTEMD
+extern "C" {
+#  include <systemd/sd-daemon.h>
+}
+#endif
+
+using namespace std::literals;
 
 #undef BELDEX_DEFAULT_LOG_CATEGORY
 #define BELDEX_DEFAULT_LOG_CATEGORY "daemon"
 
 namespace daemonize {
 
-struct t_internals {
-private:
-  t_protocol protocol;
-public:
-  t_core core;
-  t_p2p p2p;
-  std::vector<std::unique_ptr<t_rpc>> rpcs;
+std::pair<std::string, uint16_t> parse_ip_port(std::string_view ip_port, const std::string& argname)
+{
+  std::pair<std::string, uint16_t> result;
+  auto& [ip, port] = result;
 
-  t_internals(
-      boost::program_options::variables_map const & vm
-    )
-    : core{vm}
-    , protocol{vm, core, command_line::get_arg(vm, cryptonote::arg_offline)}
-    , p2p{vm, protocol}
+  if (auto colon = ip_port.rfind(":"); colon != std::string::npos && tools::parse_int(ip_port.substr(colon+1), port))
+    ip_port.remove_suffix(ip_port.size() - colon);
+  else
+    throw std::runtime_error{"Invalid IP/port value specified to " + argname + ": " + std::string(ip_port)};
+
+  if (!ip_port.empty() && ip_port.front() == '[' && ip_port.back() == ']') {
+    ip_port.remove_prefix(1);
+    ip_port.remove_suffix(1);
+  }
+
+  std::string ip_str{ip_port};
+  boost::system::error_code ec;
+  auto addr =
+#if BOOST_VERSION >= 106600
+    boost::asio::ip::make_address
+#else
+    boost::asio::ip::address::from_string
+#endif
+    (ip_str, ec);
+  if (ec)
+    throw std::runtime_error{"Invalid IP address specified: " + ip_str};
+
+  ip = addr.to_string();
+
+  return result;
+}
+
+daemon::daemon(boost::program_options::variables_map vm_) :
+    vm{std::move(vm_)},
+    core{std::make_unique<cryptonote::core>()},
+    protocol{std::make_unique<protocol_handler>(*core, command_line::get_arg(vm, cryptonote::arg_offline))},
+    p2p{std::make_unique<node_server>(*protocol)},
+    rpc{std::make_unique<cryptonote::rpc::core_rpc_server>(*core, *p2p)}
+{
+  MGINFO_BLUE("Initializing daemon objects...");
+
+  MGINFO("- cryptonote protocol");
+  if (!protocol->init(vm))
+    throw std::runtime_error("Failed to initialize cryptonote protocol.");
+
+  MGINFO("- p2p");
+  if (!p2p->init(vm))
+    throw std::runtime_error("Failed to initialize p2p server.");
+
+  // Handle circular dependencies
+  protocol->set_p2p_endpoint(p2p.get());
+  core->set_cryptonote_protocol(protocol.get());
+
+  auto rpc_config = cryptonote::rpc_args::process(vm);
+  bool new_rpc_options = !is_arg_defaulted(vm, cryptonote::rpc::http_server::arg_rpc_admin)
+    || !is_arg_defaulted(vm, cryptonote::rpc::http_server::arg_rpc_public);
+  // TODO: Remove these options, perhaps starting in beldex 9.0
+  bool deprecated_rpc_options = !is_arg_defaulted(vm, cryptonote::rpc::http_server::arg_rpc_bind_port)
+    || !is_arg_defaulted(vm, cryptonote::rpc::http_server::arg_rpc_restricted_bind_port)
+    || !is_arg_defaulted(vm, cryptonote::rpc::http_server::arg_restricted_rpc)
+    || !is_arg_defaulted(vm, cryptonote::rpc::http_server::arg_public_node)
+    || rpc_config.bind_ip.has_value()
+    || rpc_config.bind_ipv6_address.has_value()
+    || rpc_config.use_ipv6;
+
+  constexpr std::string_view deprecated_option_names = "--rpc-bind-ip/--rpc-bind-port/--rpc-restricted-bind-port/--restricted-rpc/--public-node/--rpc-use-ipv6"sv;
+
+  if (new_rpc_options && deprecated_rpc_options)
+    throw std::runtime_error{"Failed to initialize rpc settings: --rpc-public/--rpc-admin cannot be combined with deprecated " + std::string{deprecated_option_names} + " options"};
+
+  // bind ip, listen addr, required
+  std::vector<std::tuple<std::string, uint16_t, bool>> rpc_listen_admin, rpc_listen_public;
+  if (deprecated_rpc_options)
   {
-    // Handle circular dependencies
-    protocol.set_p2p_endpoint(p2p.get());
-    core.set_protocol(protocol.get());
+    MGINFO_RED(deprecated_option_names << " options are deprecated and will be removed from a future beldexd version; use --rpc-public/--rpc-admin instead");
 
-    const auto restricted = command_line::get_arg(vm, cryptonote::core_rpc_server::arg_restricted_rpc);
-    const auto main_rpc_port = command_line::get_arg(vm, cryptonote::core_rpc_server::arg_rpc_bind_port);
-    rpcs.emplace_back(new t_rpc{vm, core, p2p, restricted, main_rpc_port, "core"});
+    // These old options from Monero are really janky: --restricted-rpc turns the main port
+    // restricted, but then we also have --rpc-restricted-bind-port but both are stuck with
+    // --rpc-bind-ip, and then half of the options get parsed here but the IP option used to get
+    // parsed in the http_server code.
+    auto restricted = command_line::get_arg(vm, cryptonote::rpc::http_server::arg_restricted_rpc);
+    auto main_rpc_port = command_line::get_arg(vm, cryptonote::rpc::http_server::arg_rpc_bind_port);
+    auto restricted_rpc_port = command_line::get_arg(vm, cryptonote::rpc::http_server::arg_rpc_restricted_bind_port);
 
-    auto restricted_rpc_port_arg = cryptonote::core_rpc_server::arg_rpc_restricted_bind_port;
-    if(!command_line::is_arg_defaulted(vm, restricted_rpc_port_arg))
-    {
-      auto restricted_rpc_port = command_line::get_arg(vm, restricted_rpc_port_arg);
-      rpcs.emplace_back(new t_rpc{vm, core, p2p, true, restricted_rpc_port, "restricted"});
+    if (main_rpc_port == 0) {
+      if (restricted && restricted_rpc_port != 0)
+        std::swap(main_rpc_port, restricted_rpc_port);
+      else if (command_line::get_arg(vm, cryptonote::arg_testnet_on))
+        main_rpc_port = config::testnet::RPC_DEFAULT_PORT;
+      else if (command_line::get_arg(vm, cryptonote::arg_devnet_on))
+        main_rpc_port = config::devnet::RPC_DEFAULT_PORT;
+      else
+        main_rpc_port = config::RPC_DEFAULT_PORT;
+    }
+    if (main_rpc_port && main_rpc_port == restricted_rpc_port)
+      restricted = true;
+
+    std::vector<uint16_t> public_ports;
+    if (restricted)
+      public_ports.push_back(main_rpc_port);
+    if (restricted_rpc_port && restricted_rpc_port != main_rpc_port)
+      public_ports.push_back(restricted_rpc_port);
+
+    for (uint16_t port : public_ports) {
+      rpc_listen_public.emplace_back(rpc_config.bind_ip.value_or("127.0.0.1"), main_rpc_port, rpc_config.require_ipv4);
+      if (rpc_config.bind_ipv6_address || rpc_config.use_ipv6)
+        rpc_listen_public.emplace_back(rpc_config.bind_ipv6_address.value_or("::1"), main_rpc_port, true);
+    }
+
+    if (!restricted && main_rpc_port) {
+      rpc_listen_admin.emplace_back(rpc_config.bind_ip.value_or("127.0.0.1"), main_rpc_port, rpc_config.require_ipv4);
+      if (rpc_config.bind_ipv6_address || rpc_config.use_ipv6)
+        rpc_listen_public.emplace_back(rpc_config.bind_ipv6_address.value_or("::1"), main_rpc_port, true);
     }
   }
-};
+  else
+  { // no deprecated options
 
-void t_daemon::init_options(boost::program_options::options_description & option_spec)
-{
-  t_core::init_options(option_spec);
-  t_p2p::init_options(option_spec);
-  t_rpc::init_options(option_spec);
-}
-
-t_daemon::t_daemon(
-    boost::program_options::variables_map const & vm
-  )
-  : mp_internals{new t_internals{vm}}
-{
-  zmq_rpc_bind_port = command_line::get_arg(vm, daemon_args::arg_zmq_rpc_bind_port);
-  zmq_rpc_bind_address = command_line::get_arg(vm, daemon_args::arg_zmq_rpc_bind_ip);
-}
-
-t_daemon::~t_daemon() = default;
-
-// MSVC is brain-dead and can't default this...
-t_daemon::t_daemon(t_daemon && other)
-{
-  if (this != &other)
-  {
-    mp_internals = std::move(other.mp_internals);
-    other.mp_internals.reset(nullptr);
+    for (auto& bind : command_line::get_arg(vm, cryptonote::rpc::http_server::arg_rpc_admin)) {
+      if (bind == "none") continue;
+      auto [ip, port] = parse_ip_port(bind, "--rpc-admin");
+      bool ipv4 = ip.find(':') == std::string::npos;
+      // If using the default admin setting then don't require the bind to IPv6 localhost, or the
+      // IPv4 localhost bind if --rpc-ignore-ipv4 is given.
+      bool required = !command_line::is_arg_defaulted(vm, cryptonote::rpc::http_server::arg_rpc_admin)
+        || (ipv4 && rpc_config.require_ipv4);
+      rpc_listen_admin.emplace_back(std::move(ip), port, required);
+    }
+    for (auto& bind : command_line::get_arg(vm, cryptonote::rpc::http_server::arg_rpc_public)) {
+      // Much simpler, since this is default empty: everything specified is required.
+      auto [ip, port] = parse_ip_port(bind, "--rpc-public");
+      rpc_listen_public.emplace_back(std::move(ip), port, true);
+    }
   }
-}
 
-// or this
-t_daemon & t_daemon::operator=(t_daemon && other)
-{
-  if (this != &other)
+  if (!rpc_listen_admin.empty())
   {
-    mp_internals = std::move(other.mp_internals);
-    other.mp_internals.reset(nullptr);
+    MGINFO("- admin HTTP RPC server");
+    http_rpc_admin.emplace(*rpc, rpc_config, false /*not restricted*/, std::move(rpc_listen_admin));
   }
-  return *this;
+
+  if (!rpc_listen_public.empty())
+  {
+    MGINFO("- public HTTP RPC server");
+    http_rpc_public.emplace(*rpc, rpc_config, true /*restricted*/, std::move(rpc_listen_public));
+  }
+
+  MGINFO_BLUE("Done daemon object initialization");
 }
 
-bool t_daemon::run(bool interactive)
+daemon::~daemon()
 {
-  if (nullptr == mp_internals)
-  {
+  MGINFO_BLUE("Deinitializing daemon objects...");
+
+  if (http_rpc_public) {
+    MGINFO("- public HTTP RPC server");
+    http_rpc_public.reset();
+  }
+  if (http_rpc_admin) {
+    MGINFO("- admin HTTP RPC server");
+    http_rpc_admin.reset();
+  }
+
+  MGINFO("- p2p");
+  try {
+    p2p->deinit();
+  } catch (const std::exception& e) {
+    MERROR("Failed to deinitialize p2p: " << e.what());
+  }
+
+  MGINFO("- core");
+  try {
+    core->deinit();
+    core->set_cryptonote_protocol(nullptr);
+  } catch (const std::exception& e) {
+    MERROR("Failed to deinitialize core: " << e.what());
+  }
+
+  MGINFO("- cryptonote protocol");
+  try {
+    protocol->deinit();
+    protocol->set_p2p_endpoint(nullptr);
+  } catch (const std::exception& e) {
+    MERROR("Failed to stop cryptonote protocol: " << e.what());
+  }
+  MGINFO_BLUE("Deinitialization complete");
+}
+
+void daemon::init_options(boost::program_options::options_description& option_spec, boost::program_options::options_description& hidden)
+{
+  static bool called = false;
+  if (called)
+    throw std::logic_error("daemon::init_options must only be called once");
+  else
+    called = true;
+  cryptonote::core::init_options(option_spec);
+  node_server::init_options(option_spec);
+  cryptonote::rpc::core_rpc_server::init_options(option_spec, hidden);
+  cryptonote::rpc::http_server::init_options(option_spec, hidden);
+  cryptonote::rpc::init_lmq_options(option_spec);
+  quorumnet::init_core_callbacks();
+}
+
+bool daemon::run(bool interactive)
+{
+  if (!core)
     throw std::runtime_error{"Can't run stopped daemon"};
-  }
 
-  std::atomic<bool> stop(false), shutdown(false);
-  boost::thread stop_thread = boost::thread([&stop, &shutdown, this] {
-    while (!stop)
+  std::atomic<bool> stop_sig(false), shutdown(false);
+  std::thread stop_thread{[&stop_sig, &shutdown, this] {
+    while (!stop_sig)
       epee::misc_utils::sleep_no_w(100);
     if (shutdown)
-      this->stop_p2p();
-  });
-  epee::misc_utils::auto_scope_leave_caller scope_exit_handler = epee::misc_utils::create_scope_leave_handler([&](){
-    stop = true;
+      stop();
+  }};
+
+  BELDEX_DEFER
+  {
+    stop_sig = true;
     stop_thread.join();
-  });
-  tools::signal_handler::install([&stop, &shutdown](int){ stop = shutdown = true; });
+  };
+
+  tools::signal_handler::install([&stop_sig, &shutdown](int) { stop_sig = true; shutdown = true; });
 
   try
   {
-    if (!mp_internals->core.run())
-      return false;
+    MGINFO_BLUE("Starting up beldexd services...");
+    cryptonote::GetCheckpointsCallback get_checkpoints;
+#if defined(PER_BLOCK_CHECKPOINT)
+    get_checkpoints = blocks::GetCheckpointsData;
+#endif
+    MGINFO("Starting core");
+    if (!core->init(vm, nullptr, get_checkpoints))
+      throw std::runtime_error("Failed to start core");
 
-    for(auto& rpc: mp_internals->rpcs)
-      rpc->run();
+    MGINFO("Starting OxenMQ");
+    lmq_rpc = std::make_unique<cryptonote::rpc::lmq_rpc>(*core, *rpc, vm);
+    core->start_oxenmq();
 
-    std::unique_ptr<daemonize::t_command_server> rpc_commands;
-    if (interactive && mp_internals->rpcs.size())
-    {
-      // The first three variables are not used when the fourth is false
-      rpc_commands.reset(new daemonize::t_command_server(0, 0, boost::none, false, mp_internals->rpcs.front()->get_server()));
-      rpc_commands->start_handling(std::bind(&daemonize::t_daemon::stop_p2p, this));
+    if (http_rpc_admin) {
+      MGINFO("Starting admin HTTP RPC server");
+      http_rpc_admin->start();
+    }
+    if (http_rpc_public) {
+      MGINFO("Starting public HTTP RPC server");
+      http_rpc_public->start();
     }
 
-    cryptonote::rpc::DaemonHandler rpc_daemon_handler(mp_internals->core.get(), mp_internals->p2p.get());
-    cryptonote::rpc::ZmqServer zmq_server(rpc_daemon_handler);
-
-    if (!zmq_server.addTCPSocket(zmq_rpc_bind_address, zmq_rpc_bind_port))
+    std::unique_ptr<daemonize::command_server> rpc_commands;
+    if (interactive)
     {
-      LOG_ERROR(std::string("Failed to add TCP Socket (") + zmq_rpc_bind_address
-          + ":" + zmq_rpc_bind_port + ") to ZMQ RPC Server");
-
-      if (rpc_commands)
-        rpc_commands->stop_handling();
-
-      for(auto& rpc : mp_internals->rpcs)
-        rpc->stop();
-
-      return false;
+      MGINFO("Starting command-line processor");
+      rpc_commands = std::make_unique<daemonize::command_server>(*rpc);
+      rpc_commands->start_handling([this] { stop(); });
     }
 
-    MINFO("Starting ZMQ server...");
-    zmq_server.run();
+    MGINFO_GREEN("Starting up main network");
 
-    MINFO(std::string("ZMQ server started at ") + zmq_rpc_bind_address
-          + ":" + zmq_rpc_bind_port + ".");
+#ifdef ENABLE_SYSTEMD
+    sd_notify(0, ("READY=1\nSTATUS=" + core->get_status_string()).c_str());
+#endif
 
-    mp_internals->p2p.run(); // blocks until p2p goes down
+    p2p->run(); // blocks until p2p goes down
+    MGINFO_YELLOW("Main network stopped");
 
     if (rpc_commands)
+    {
+      MGINFO("Stopping RPC command processor");
       rpc_commands->stop_handling();
+    }
 
-    zmq_server.stop();
+    if (http_rpc_public) {
+      MGINFO("Stopping public HTTP RPC server...");
+      http_rpc_public->shutdown();
+    }
+    if (http_rpc_admin) {
+      MGINFO("Stopping admin HTTP RPC server...");
+      http_rpc_admin->shutdown();
+    }
 
-    for(auto& rpc : mp_internals->rpcs)
-      rpc->stop();
     MGINFO("Node stopped.");
     return true;
   }
-  catch (std::exception const & ex)
+  catch (std::exception const& ex)
   {
-    MFATAL("Uncaught exception! " << ex.what());
+    MFATAL(ex.what());
     return false;
   }
   catch (...)
   {
-    MFATAL("Uncaught exception!");
+    MFATAL("Unknown exception occured!");
     return false;
   }
 }
 
-void t_daemon::stop()
+void daemon::stop()
 {
-  if (nullptr == mp_internals)
-  {
-    throw std::runtime_error{"Can't stop stopped daemon"};
-  }
-  mp_internals->p2p.stop();
-  for(auto& rpc : mp_internals->rpcs)
-    rpc->stop();
+  if (!core)
+    throw std::logic_error{"Can't send stop signal to a stopped daemon"};
 
-  mp_internals.reset(nullptr); // Ensure resources are cleaned up before we return
-}
-
-void t_daemon::stop_p2p()
-{
-  if (nullptr == mp_internals)
-  {
-    throw std::runtime_error{"Can't send stop signal to a stopped daemon"};
-  }
-  mp_internals->p2p.get().send_stop_signal();
+  p2p->send_stop_signal(); // Make p2p stop so that `run()` above continues with tear down
 }
 
 } // namespace daemonize

@@ -29,54 +29,136 @@
 # Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
 
-# This is broken up into two parts: first we check for miniupnp, compile it if we can't
-# find it, and thereafter we check for libunbound, and compile it if we can't find it.
 # We always compile if we are building statically to reduce static dependency issues...
 # ...except for FreeBSD, because FreeBSD is a special case that doesn't play well with
 # others.
 
-find_package(Miniupnpc REQUIRED)
-
-message(STATUS "Using in-tree miniupnpc")
-add_subdirectory(miniupnp/miniupnpc)
-set_property(TARGET libminiupnpc-static PROPERTY FOLDER "external")
-if(MSVC)
-  set_property(TARGET libminiupnpc-static APPEND_STRING PROPERTY COMPILE_FLAGS " -wd4244 -wd4267")
-elseif(NOT MSVC)
-  set_property(TARGET libminiupnpc-static APPEND_STRING PROPERTY COMPILE_FLAGS " -Wno-undef -Wno-unused-result -Wno-unused-value")
-endif()
-if(CMAKE_SYSTEM_NAME MATCHES "NetBSD")
-	set_property(TARGET libminiupnpc-static APPEND_STRING PROPERTY COMPILE_FLAGS " -D_NETBSD_SOURCE")
+set(DEFAULT_WITH_MINIUPNPC ON)
+if(ANDROID OR IOS)
+  set(DEFAULT_WITH_MINIUPNPC OFF)
 endif()
 
-set(UPNP_LIBRARIES "libminiupnpc-static" PARENT_SCOPE)
+option(WITH_MINIUPNPC "Enable miniupnpc support for IGD NAT hole punching" ${DEFAULT_WITH_MINIUPNPC})
 
-find_package(Unbound)
+if(NOT STATIC AND NOT BUILD_STATIC_DEPS)
+  find_package(PkgConfig REQUIRED)
+  if(WITH_MINIUPNPC)
+    pkg_check_modules(MINIUPNPC miniupnpc>=2.1)
+  endif()
+  pkg_check_modules(UNBOUND libunbound)
+  pkg_check_modules(LOKIMQ liboxenmq>=1.2.3)
+endif()
 
-if(NOT UNBOUND_INCLUDE_DIR OR STATIC)
-  # NOTE: If STATIC is true, CMAKE_FIND_LIBRARY_SUFFIXES has been reordered.
-  # unbound has config tests which used OpenSSL libraries, so -ldl may need to
-  # be set in this case.
-  # The unbound CMakeLists.txt can set it, since it's also needed for the
-  # static OpenSSL libraries set up there after with target_link_libraries.
-  add_subdirectory(unbound)
-
-  set(UNBOUND_STATIC true PARENT_SCOPE)
-  set(UNBOUND_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/unbound/libunbound" PARENT_SCOPE)
-  set(UNBOUND_LIBRARY "unbound" PARENT_SCOPE)
-  set(UNBOUND_LIBRARY_DIRS "${LIBEVENT2_LIBDIR}" PARENT_SCOPE)
+if(NOT WITH_MINIUPNPC)
+  message(STATUS "miniupnpc support disabled")
+  target_compile_definitions(miniupnpc INTERFACE WITHOUT_MINIUPNPC)
+elseif(MINIUPNPC_FOUND)
+  message(STATUS "Found miniupnpc")
+  link_dep_libs(miniupnpc INTERFACE "${MINIUPNPC_LIBRARY_DIRS}" ${MINIUPNPC_LIBRARIES})
+  target_include_directories(miniupnpc INTERFACE ${MINIUPNPC_INCLUDE_DIRS})
 else()
-  message(STATUS "Found libunbound include (unbound.h) in ${UNBOUND_INCLUDE_DIR}")
-  if(UNBOUND_LIBRARIES)
-    message(STATUS "Found libunbound shared library")
-    set(UNBOUND_STATIC false PARENT_SCOPE)
-    set(UNBOUND_INCLUDE ${UNBOUND_INCLUDE_DIR} PARENT_SCOPE)
-    set(UNBOUND_LIBRARY ${UNBOUND_LIBRARIES} PARENT_SCOPE)
-    set(UNBOUND_LIBRARY_DIRS "" PARENT_SCOPE)
+  message(STATUS "Using in-tree miniupnpc")
+  add_subdirectory(miniupnp/miniupnpc)
+  if(MSVC)
+    target_compile_options(libminiupnpc-static PRIVATE -wd4244 -wd4267)
   else()
-    die("Found libunbound includes, but could not find libunbound library. Please make sure you have installed libunbound or libunbound-dev or the equivalent")
+    target_compile_options(libminiupnpc-static PRIVATE -Wno-undef -Wno-unused-result -Wno-unused-value)
+  endif()
+  if(CMAKE_SYSTEM_NAME MATCHES "NetBSD")
+    target_compile_definitions(libminiupnpc-static PRIVATE _NETBSD_SOURCE)
+  endif()
+
+  target_link_libraries(miniupnpc INTERFACE libminiupnpc-static)
+endif()
+
+
+if(NOT LOKIMQ_FOUND)
+  message(STATUS "Using in-tree oxenmq")
+  if (DEPENDS)
+    # The depends system builds a static libzmq so set up a target loki-mq can use to avoid building
+    add_library(libzmq STATIC IMPORTED GLOBAL)
+    set_target_properties(libzmq PROPERTIES IMPORTED_LOCATION ${ZMQ_LIBRARIES})
+    target_link_libraries(libzmq INTERFACE sodium)
+    target_include_directories(libzmq INTERFACE ${ZMQ_INCLUDE_DIRS})
+    message(STATUS "${ZMQ_INCLUDE_DIRS} ${ZMQ_LIBRARIES}")
+  endif()
+  add_subdirectory(loki-mq)
+else()
+  add_library(oxenmq INTERFACE)
+  link_dep_libs(oxenmq INTERFACE "${LOKIMQ_LIBRARY_DIRS}" ${LOKIMQ_LIBRARIES})
+  target_include_directories(oxenmq INTERFACE ${LOKIMQ_INCLUDE_DIRS})
+  add_library(oxenmq::oxenmq ALIAS oxenmq)
+  message(STATUS "Found liboxenmq ${LOKIMQ_VERSION}")
+
+  # TODO: Temporary fix for also linking libzmq; this can go when the direct zmq code (for zmq
+  # server) gets replaced with oxenmq.
+  pkg_check_modules(LIBZMQ libzmq)
+  if (LIBZMQ_FOUND)
+    link_dep_libs(oxenmq INTERFACE "${LIBZMQ_LIBRARY_DIRS}" ${LIBZMQ_LIBRARIES})
+    target_include_directories(oxenmq INTERFACE ${LIBZMQ_INCLUDE_DIRS})
   endif()
 endif()
 
 add_subdirectory(db_drivers)
-add_subdirectory(easylogging++)
+add_subdirectory(easylogging++ easyloggingpp)
+add_subdirectory(randomx EXCLUDE_FROM_ALL)
+
+# uSockets doesn't really have a proper build system (just a very simple Makefile) so build it
+# ourselves.
+if (NOT CMAKE_VERSION VERSION_LESS 3.12)
+    set(conf_depends "CONFIGURE_DEPENDS")
+else()
+    set(conf_depends "")
+endif()
+file(GLOB usockets_src ${conf_depends} uWebSockets/uSockets/src/*.c uWebSockets/uSockets/src/eventing/*.c)
+file(COPY uWebSockets/uSockets/src/libusockets.h DESTINATION uWebSockets)
+add_library(uSockets STATIC EXCLUDE_FROM_ALL ${usockets_src})
+target_compile_definitions(uSockets PRIVATE LIBUS_NO_SSL=1)
+target_include_directories(uSockets PRIVATE uWebSockets/uSockets/src)
+
+# On Windows uSockets uses libuv for its event loop; on Mac kqueue is the default, but that seems to
+# not be reliable on older macos versions (like 10.12), so we use libuv on macos as well.
+if (WIN32 OR APPLE)
+  add_subdirectory(libuv EXCLUDE_FROM_ALL)
+  target_link_libraries(uSockets uv_a)
+  target_compile_definitions(uSockets PUBLIC LIBUS_USE_LIBUV)
+endif()
+
+
+# The uWebSockets C++ layer is header-only but isn't actually prefixed in the repository itself, but
+# rather only on install (which, as above, is just a very simple Makefile).  This is unfortunate
+# because it means that we can't use `#include <uWebSockets/App.h>` directly with the repo; so
+# instead we emulate the installation process into the build directory and include it (with the
+# prefix) from there.
+file(COPY uWebSockets/src/ DESTINATION uWebSockets/uWebSockets FILES_MATCHING PATTERN "*.h" PATTERN "*.hpp")
+add_library(uWebSockets INTERFACE)
+target_include_directories(uWebSockets INTERFACE ${CMAKE_CURRENT_BINARY_DIR}/uWebSockets)
+target_link_libraries(uWebSockets INTERFACE uSockets)
+target_compile_definitions(uWebSockets INTERFACE UWS_HTTPRESPONSE_NO_WRITEMARK UWS_NO_ZLIB)
+
+
+# cpr configuration.  Ideally we'd just do this via add_subdirectory, but cpr's cmake requires
+# 3.15+, and we target lower than that (and this is fairly simple to build).
+
+if(NOT BUILD_STATIC_DEPS)
+  find_package(CURL REQUIRED COMPONENTS HTTP HTTPS SSL)
+
+  # CURL::libcurl wasn't added to FindCURL until cmake 3.12, so add it if necessary
+  if (CMAKE_VERSION VERSION_LESS 3.12 AND NOT TARGET CURL::libcurl)
+    add_library(libcurl UNKNOWN IMPORTED GLOBAL)
+    set_target_properties(libcurl PROPERTIES
+      IMPORTED_LOCATION ${CURL_LIBRARIES}
+      INTERFACE_INCLUDE_DIRECTORIES "${CURL_INCLUDE_DIRS}")
+    add_library(CURL_libcurl INTERFACE)
+    target_link_libraries(CURL_libcurl INTERFACE libcurl)
+    add_library(CURL::libcurl ALIAS CURL_libcurl)
+  endif()
+endif()
+
+file(GLOB cpr_sources ${conf_depends} cpr/cpr/*.cpp)
+
+add_library(cpr STATIC EXCLUDE_FROM_ALL ${cpr_sources})
+target_link_libraries(cpr PUBLIC CURL::libcurl)
+target_include_directories(cpr PUBLIC cpr/include)
+target_compile_definitions(cpr PUBLIC CPR_CURL_NOSIGNAL)
+add_library(cpr::cpr ALIAS cpr)

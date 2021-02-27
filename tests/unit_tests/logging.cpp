@@ -28,23 +28,27 @@
 //
 // Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
-#include <boost/filesystem.hpp>
 #include "gtest/gtest.h"
-#include "file_io_utils.h"
-#include "misc_log_ex.h"
+#include "common/file.h"
+#include "epee/misc_log_ex.h"
+
+#include "random_path.h"
 
 static std::string log_filename;
 
 static void init()
 {
-  boost::filesystem::path p = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path();
+  fs::path p = random_tmp_file();
   log_filename = p.string();
   mlog_configure(log_filename, false, 0);
 }
 
 static void cleanup()
 {
-  boost::filesystem::remove(log_filename);
+  // windows does not let files be deleted if still in use, so leave droppings there
+#ifndef _WIN32
+  fs::remove(log_filename);
+#endif
 }
 
 static size_t nlines(const std::string &str)
@@ -58,7 +62,7 @@ static size_t nlines(const std::string &str)
 
 static bool load_log_to_string(const std::string &filename, std::string &str)
 {
-  if (!epee::file_io_utils::load_file_to_string(filename, str))
+  if (!tools::slurp_file(filename, str))
     return false;
   for (const char *ptr = str.c_str(); *ptr; ++ptr)
   {

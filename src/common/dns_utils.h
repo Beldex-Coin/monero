@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -30,18 +30,24 @@
 #include <vector>
 #include <string>
 #include <functional>
-#include <boost/optional/optional_fwd.hpp>
+#include <optional>
+#include <chrono>
+#include <string_view>
+
+struct ub_ctx;
 
 namespace tools
 {
 
-// RFC defines for record types and classes for DNS, gleaned from ldns source
-const static int DNS_CLASS_IN  = 1;
-const static int DNS_TYPE_A    = 1;
-const static int DNS_TYPE_TXT  = 16;
-const static int DNS_TYPE_AAAA = 8;
+using namespace std::literals;
 
-struct DNSResolverData;
+// RFC defines for record types and classes for DNS, gleaned from ldns source
+constexpr int DNS_CLASS_IN  = 1;
+constexpr int DNS_TYPE_A    = 1;
+constexpr int DNS_TYPE_TXT  = 16;
+constexpr int DNS_TYPE_AAAA = 8;
+
+struct ub_ctx_deleter { void operator()(ub_ctx*); };
 
 /**
  * @brief Provides high-level access to DNS resolution
@@ -62,11 +68,6 @@ private:
   DNSResolver();
 
 public:
-
-  /**
-   * @brief takes care of freeing C pointers and such
-   */
-  ~DNSResolver();
 
   /**
    * @brief gets ipv4 addresses from DNS query of a URL
@@ -106,6 +107,24 @@ public:
    std::vector<std::string> get_txt_record(const std::string& url, bool& dnssec_available, bool& dnssec_valid);
 
   /**
+   * @brief query multiple hostnames simultaneously for results, waiting up to a fixed amount of
+   * time for results before returning.
+   *
+   * @param type `DNS_TYPE_A` or `DNS_TYPE_AAAA` or `DNS_TYPE_TXT` indicating the lookup type.
+   * @param hostnames a vector of hostnames to look up
+   * @param timeout how long to wait for results before giving up.  Any results not yet retrieved by
+   * the timeout are left empty.
+   * @param dnssec if true then validate DNSSEC if available (i.e. reject DNSSEC failures, but allow insecure results when DNSSEC not available)
+   * @param dnssec_required if true then require and validate DNSSEC (i.e. reject failures and reject when DNSSEC not available)
+   *
+   * Returns a vector of vector of results: the results for address [i] are in result element [i].
+   * If lookup failed (or DNSSEC failed with the relevant options given) for element [i] then vector
+   * [i] will be empty.
+   */
+   // TODO: this could be extended to support doing multiple lookup types at once (e.g. A and AAAA).
+  std::vector<std::vector<std::string>> get_many(int type, const std::vector<std::string>& hostnames, std::chrono::milliseconds timeout = 10s, bool dnssec = false, bool dnssec_required = false);
+
+  /**
    * @brief Gets a DNS address from OpenAlias format
    *
    * If the address looks good, but contains one @ symbol, replace that with a .
@@ -115,12 +134,12 @@ public:
    *
    * @return dns_addr  DNS address
    */
-  std::string get_dns_format_from_oa_address(const std::string& oa_addr);
+  std::string get_dns_format_from_oa_address(std::string_view oa_addr);
 
   /**
    * @brief Gets the singleton instance of DNSResolver
    *
-   * @return returns a pointer to the singleton
+   * @return returns a reference to the singleton
    */
   static DNSResolver& instance();
 
@@ -144,27 +163,19 @@ private:
    * @return A vector of strings containing the requested record; or an empty vector
    */
   // TODO: modify this to accommodate DNSSEC
-  std::vector<std::string> get_record(const std::string& url, int record_type, boost::optional<std::string> (*reader)(const char *,size_t), bool& dnssec_available, bool& dnssec_valid);
+  std::vector<std::string> get_record(const std::string& url, int record_type, std::optional<std::string> (*reader)(const char *,size_t), bool& dnssec_available, bool& dnssec_valid);
 
-  /**
-   * @brief Checks a string to see if it looks like a URL
-   *
-   * @param addr the string to be checked
-   *
-   * @return true if it looks enough like a URL, false if not
-   */
-  bool check_address_syntax(const char *addr) const;
-
-  DNSResolverData *m_data;
+  ub_ctx* m_ctx = nullptr;
 }; // class DNSResolver
 
 namespace dns_utils
 {
 
-std::string address_from_txt_record(const std::string& s);
-std::vector<std::string> addresses_from_url(const std::string& url, bool& dnssec_valid);
+std::string address_from_txt_record(std::string_view s);
+std::vector<std::string> addresses_from_url(const std::string_view url, bool& dnssec_valid);
 
-std::string get_account_address_as_str_from_url(const std::string& url, bool& dnssec_valid, std::function<std::string(const std::string&, const std::vector<std::string>&, bool)> confirm_dns);
+std::string get_account_address_as_str_from_url(const std::string_view url, bool& dnssec_valid,
+    std::function<std::string(const std::string_view, const std::vector<std::string>&, bool)> confirm_dns);
 
 bool load_txt_records_from_dns(std::vector<std::string> &records, const std::vector<std::string> &dns_urls);
 

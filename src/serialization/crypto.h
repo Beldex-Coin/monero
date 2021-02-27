@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -33,48 +33,25 @@
 #include <vector>
 
 #include "serialization.h"
-#include "debug_archive.h"
 #include "crypto/chacha.h"
 #include "crypto/crypto.h"
 #include "crypto/hash.h"
 
-// read
-template <template <bool> class Archive>
-bool do_serialize(Archive<false> &ar, std::vector<crypto::signature> &v)
+namespace serialization {
+
+// For vector-of-signature serialization, we don't write the size but just dump the contents
+// directly.  When reading, the vector must have already been resized to the target size and we
+// slurp them in.
+template <class Archive>
+void serialize_value(Archive& ar, std::vector<crypto::signature>& v)
 {
-  size_t cnt = v.size();
-  v.clear();
+  if constexpr (Archive::is_deserializer)
+    // very basic sanity check
+    ar.remaining_bytes(v.size() * sizeof(crypto::signature));
 
-  // very basic sanity check
-  if (ar.remaining_bytes() < cnt*sizeof(crypto::signature)) {
-    ar.stream().setstate(std::ios::failbit);
-    return false;
-  }
-
-  v.reserve(cnt);
-  for (size_t i = 0; i < cnt; i++) {
-    v.resize(i+1);
-    ar.serialize_blob(&(v[i]), sizeof(crypto::signature), "");
-    if (!ar.stream().good())
-      return false;
-  }
-  return true;
+  ar.serialize_blob(v.data(), v.size() * sizeof(crypto::signature));
 }
 
-// write
-template <template <bool> class Archive>
-bool do_serialize(Archive<true> &ar, std::vector<crypto::signature> &v)
-{
-  if (0 == v.size()) return true;
-  ar.begin_string();
-  size_t cnt = v.size();
-  for (size_t i = 0; i < cnt; i++) {
-    ar.serialize_blob(&(v[i]), sizeof(crypto::signature), "");
-    if (!ar.stream().good())
-      return false;
-  }
-  ar.end_string();
-  return true;
 }
 
 BLOB_SERIALIZER(crypto::chacha_iv);
@@ -85,11 +62,5 @@ BLOB_SERIALIZER(crypto::secret_key);
 BLOB_SERIALIZER(crypto::key_derivation);
 BLOB_SERIALIZER(crypto::key_image);
 BLOB_SERIALIZER(crypto::signature);
-VARIANT_TAG(debug_archive, crypto::hash, "hash");
-VARIANT_TAG(debug_archive, crypto::hash8, "hash8");
-VARIANT_TAG(debug_archive, crypto::public_key, "public_key");
-VARIANT_TAG(debug_archive, crypto::secret_key, "secret_key");
-VARIANT_TAG(debug_archive, crypto::key_derivation, "key_derivation");
-VARIANT_TAG(debug_archive, crypto::key_image, "key_image");
-VARIANT_TAG(debug_archive, crypto::signature, "signature");
-
+BLOB_SERIALIZER(crypto::ed25519_public_key);
+BLOB_SERIALIZER(crypto::ed25519_signature);

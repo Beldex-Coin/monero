@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2018, The Monero Project
+// Copyright (c) 2017-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -31,15 +31,14 @@
 
 
 #include "device_default.hpp"
-#include "int-util.h"
+#include "crypto/crypto.h"
+#include "epee/int-util.h"
 #include "cryptonote_basic/account.h"
 #include "cryptonote_basic/subaddress_index.h"
 #include "cryptonote_core/cryptonote_tx_utils.h"
 #include "ringct/rctOps.h"
-
-#include "log.hpp"
-#define ENCRYPTED_PAYMENT_ID_TAIL 0x8d
-#define CHACHA8_KEY_TAIL 0x8c
+#include "cryptonote_config.h"
+#include <sodium/crypto_generichash.h>
 
 namespace hw {
 
@@ -62,12 +61,12 @@ namespace hw {
         /* ======================================================================= */
         /*                              SETUP/TEARDOWN                             */
         /* ======================================================================= */
-        bool device_default::set_name(const std::string &name)  {
+        bool device_default::set_name(std::string_view name) {
             this->name = name;
             return true;
         }
-        const std::string device_default::get_name()  const {
-            return this->name;
+        std::string device_default::get_name() const {
+            return name;
         }
         
         bool device_default::init(void) {
@@ -108,7 +107,7 @@ namespace hw {
             epee::mlocked<tools::scrubbed_arr<char, sizeof(view_key) + sizeof(spend_key) + 1>> data;
             memcpy(data.data(), &view_key, sizeof(view_key));
             memcpy(data.data() + sizeof(view_key), &spend_key, sizeof(spend_key));
-            data[sizeof(data) - 1] = CHACHA8_KEY_TAIL;
+            data[sizeof(data) - 1] = config::HASH_KEY_WALLET;
             crypto::generate_chacha_key(data.data(), sizeof(data), key, kdf_rounds);
             return true;
         }
@@ -197,14 +196,13 @@ namespace hw {
         }
 
         crypto::secret_key  device_default::get_subaddress_secret_key(const crypto::secret_key &a, const cryptonote::subaddress_index &index) {
-            const char prefix[] = "SubAddr";
-            char data[sizeof(prefix) + sizeof(crypto::secret_key) + 2 * sizeof(uint32_t)];
-            memcpy(data, prefix, sizeof(prefix));
-            memcpy(data + sizeof(prefix), &a, sizeof(crypto::secret_key));
+            char data[config::HASH_KEY_SUBADDRESS.size() + sizeof(crypto::secret_key) + 2 * sizeof(uint32_t)];
+            memcpy(data, config::HASH_KEY_SUBADDRESS.data(), config::HASH_KEY_SUBADDRESS.size());
+            memcpy(data + config::HASH_KEY_SUBADDRESS.size(), &a, sizeof(crypto::secret_key));
             uint32_t idx = SWAP32LE(index.major);
-            memcpy(data + sizeof(prefix) + sizeof(crypto::secret_key), &idx, sizeof(uint32_t));
+            memcpy(data + config::HASH_KEY_SUBADDRESS.size() + sizeof(crypto::secret_key), &idx, sizeof(uint32_t));
             idx = SWAP32LE(index.minor);
-            memcpy(data + sizeof(prefix) + sizeof(crypto::secret_key) + sizeof(uint32_t), &idx, sizeof(uint32_t));
+            memcpy(data + config::HASH_KEY_SUBADDRESS.size() + sizeof(crypto::secret_key) + sizeof(uint32_t), &idx, sizeof(uint32_t));
             crypto::secret_key m;
             crypto::hash_to_scalar(data, sizeof(data), m);
             return m;
@@ -266,6 +264,31 @@ namespace hw {
             return true;
         }
 
+        bool device_default::generate_key_image_signature(const crypto::key_image& image, const crypto::public_key& pub, const crypto::secret_key& sec, crypto::signature& sig) {
+            crypto::generate_key_image_signature(image, pub, sec, sig);
+            return true;
+        }
+
+        bool device_default::generate_unlock_signature(const crypto::public_key& pub, const crypto::secret_key& sec, crypto::signature& sig) {
+            crypto::generate_signature(cryptonote::tx_extra_tx_key_image_unlock::HASH, pub, sec, sig);
+            return true;
+        }
+
+        bool device_default::generate_lns_signature(std::string_view sig_data, const cryptonote::account_keys& keys, const cryptonote::subaddress_index& index, crypto::signature& sig) {
+            crypto::hash hash;
+            crypto_generichash(reinterpret_cast<unsigned char*>(hash.data), sizeof(hash), reinterpret_cast<const unsigned char*>(sig_data.data()), sig_data.size(), nullptr, 0);
+
+            crypto::secret_key skey = keys.m_spend_secret_key;
+            if (!index.is_zero())
+              sc_secret_add(skey, skey, get_subaddress_secret_key(keys.m_view_secret_key, index));
+
+            crypto::public_key pkey;
+            secret_key_to_public_key(skey, pkey);
+
+            crypto::generate_signature(hash, pkey, skey, sig);
+            return true;
+        }
+
         bool device_default::conceal_derivation(crypto::key_derivation &derivation, const crypto::public_key &tx_pub_key, const std::vector<crypto::public_key> &additional_tx_pub_keys, const crypto::key_derivation &main_derivation, const std::vector<crypto::key_derivation> &additional_derivations){
             return true;
         }
@@ -273,19 +296,36 @@ namespace hw {
         /* ======================================================================= */
         /*                               TRANSACTION                               */
         /* ======================================================================= */
+        void device_default::generate_tx_proof(const crypto::hash &prefix_hash, 
+                                               const crypto::public_key &R, const crypto::public_key &A, const std::optional<crypto::public_key> &B, const crypto::public_key &D, const crypto::secret_key &r,
+                                               crypto::signature &sig) {
+            crypto::generate_tx_proof(prefix_hash, R, A, B, D, r, sig);
+        }
 
-        bool device_default::open_tx(crypto::secret_key &tx_key) {
-            cryptonote::keypair txkey = cryptonote::keypair::generate(*this);
+        bool device_default::open_tx(crypto::secret_key &tx_key, cryptonote::txversion /*version*/, cryptonote::txtype /*type*/) {
+            cryptonote::keypair txkey{*this};
             tx_key = txkey.sec;
             return true;
         }
 
-        bool device_default::generate_output_ephemeral_keys(const size_t tx_version, bool &found_change,
-                                                            const cryptonote::account_keys &sender_account_keys, const crypto::public_key &txkey_pub,  const crypto::secret_key &tx_key,
-                                                            const cryptonote::tx_destination_entry &dst_entr, const boost::optional<cryptonote::tx_destination_entry> &change_addr, const size_t output_index,
-                                                            const bool &need_additional_txkeys, const std::vector<crypto::secret_key> &additional_tx_keys,
-                                                            std::vector<crypto::public_key> &additional_tx_public_keys,
-                                                            std::vector<rct::key> &amount_keys,  crypto::public_key &out_eph_public_key) {
+        void device_default::get_transaction_prefix_hash(const cryptonote::transaction_prefix& tx, crypto::hash& h) {
+            cryptonote::get_transaction_prefix_hash(tx, h);
+        }
+
+        bool device_default::generate_output_ephemeral_keys(
+            const size_t tx_version,
+            bool& found_change,
+            const cryptonote::account_keys& sender_account_keys,
+            const crypto::public_key& txkey_pub,
+            const crypto::secret_key& tx_key,
+            const cryptonote::tx_destination_entry& dst_entr,
+            const std::optional<cryptonote::tx_destination_entry>& change_addr,
+            const size_t output_index,
+            const bool need_additional_txkeys,
+            const std::vector<crypto::secret_key>& additional_tx_keys,
+            std::vector<crypto::public_key>& additional_tx_public_keys,
+            std::vector<rct::key>& amount_keys,
+            crypto::public_key& out_eph_public_key) {
 
             // make additional tx pubkey if necessary
             cryptonote::keypair additional_txkey;
@@ -341,13 +381,17 @@ namespace hw {
                 return false;
 
             memcpy(data, &derivation, 32);
-            data[32] = ENCRYPTED_PAYMENT_ID_TAIL;
+            data[32] = config::HASH_KEY_ENCRYPTED_PAYMENT_ID;
             cn_fast_hash(data, 33, hash);
 
             for (size_t b = 0; b < 8; ++b)
                 payment_id.data[b] ^= hash.data[b];
 
             return true;
+        }
+
+        rct::key device_default::genCommitmentMask(const rct::key &amount_key) {
+            return rct::genCommitmentMask(amount_key);
         }
 
         bool  device_default::ecdhEncode(rct::ecdhTuple & unmasked, const rct::key & sharedSec, bool short_amount) {
@@ -360,38 +404,38 @@ namespace hw {
             return true;
         }
 
-        bool device_default::mlsag_prepare(const rct::key &H, const rct::key &xx,
-                                         rct::key &a, rct::key &aG, rct::key &aHP, rct::key &II) {
-            rct::skpkGen(a, aG);
-            rct::scalarmultKey(aHP, H, a);
-            rct::scalarmultKey(II, H, xx);
-            return true;
-        }
-        bool  device_default::mlsag_prepare(rct::key &a, rct::key &aG) {
-            rct::skpkGen(a, aG);
-            return true;
-        }
-        bool  device_default::mlsag_prehash(const std::string &blob, size_t inputs_size, size_t outputs_size, const rct::keyV &hashes, const rct::ctkeyV &outPk, rct::key &prehash) {
+        bool  device_default::clsag_prehash(const std::string &blob, size_t inputs_size, size_t outputs_size, const rct::keyV &hashes, const rct::ctkeyV &outPk, rct::key &prehash) {
             prehash = rct::cn_fast_hash(hashes);
             return true;
         }
 
-
-        bool device_default::mlsag_hash(const rct::keyV &toHash, rct::key &c_old) {
-            c_old = rct::hash_to_scalar(toHash);
+        bool device_default::clsag_prepare(const rct::key &p, const rct::key &z, rct::key &I, rct::key &D, const rct::key &H, rct::key &a, rct::key &aG, rct::key &aH) {
+            rct::skpkGen(a,aG); // aG = a*G
+            rct::scalarmultKey(aH,H,a); // aH = a*H
+            rct::scalarmultKey(I,H,p); // I = p*H
+            rct::scalarmultKey(D,H,z); // D = z*H
             return true;
         }
 
-        bool device_default::mlsag_sign(const rct::key &c,  const rct::keyV &xx, const rct::keyV &alpha, const size_t rows, const size_t dsRows, rct::keyV &ss ) {
-            CHECK_AND_ASSERT_THROW_MES(dsRows<=rows, "dsRows greater than rows");
-            CHECK_AND_ASSERT_THROW_MES(xx.size() == rows, "xx size does not match rows");
-            CHECK_AND_ASSERT_THROW_MES(alpha.size() == rows, "alpha size does not match rows");
-            CHECK_AND_ASSERT_THROW_MES(ss.size() == rows, "ss size does not match rows");
-            for (size_t j = 0; j < rows; j++) {
-                sc_mulsub(ss[j].bytes, c.bytes, xx[j].bytes, alpha[j].bytes);
-            }
+        bool device_default::clsag_hash(const rct::keyV &data, rct::key &hash) {
+            hash = rct::hash_to_scalar(data);
             return true;
         }
+
+        bool device_default::clsag_sign(const rct::key &c, const rct::key &a, const rct::key &p, const rct::key &z, const rct::key &mu_P, const rct::key &mu_C, rct::key &s) {
+            rct::key s0_p_mu_P;
+            sc_mul(s0_p_mu_P.bytes,mu_P.bytes,p.bytes);
+            rct::key s0_add_z_mu_C;
+            sc_muladd(s0_add_z_mu_C.bytes,mu_C.bytes,z.bytes,s0_p_mu_P.bytes);
+            sc_mulsub(s.bytes,c.bytes,s0_add_z_mu_C.bytes,a.bytes);
+
+            return true;
+        }
+
+        bool device_default::update_staking_tx_secret_key([[maybe_unused]] crypto::secret_key& key) {
+            return true;
+        }
+
 
         bool device_default::close_tx() {
             return true;

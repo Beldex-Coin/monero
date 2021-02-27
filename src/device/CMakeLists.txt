@@ -27,53 +27,49 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-set(device_sources
+add_library(device
   device.cpp
   device_default.cpp
   log.cpp
   )
 
-if(HIDAPI_FOUND)
-  set(device_sources 
-    ${device_sources} 
+target_link_libraries(device
+  PUBLIC
+    common
+    cncrypto
+    ringct_basic
+    OpenSSL::Crypto
+    Boost::serialization
+  PRIVATE
+    version
+    extra)
+
+option(HWDEVICE_DEBUG "Enable hardware wallet debugging (requires also using a debug build of the Ledger wallet)" OFF)
+if(HWDEVICE_DEBUG)
+  target_compile_definitions(device PUBLIC DEBUG_HWDEVICE IODUMMYCRYPT_HWDEVICE)
+endif()
+
+
+if(BUILD_STATIC_DEPS)
+  message(STATUS "Using HIDAPI from static build deps")
+else()
+  add_library(hidapi_libusb INTERFACE)
+  find_package(HIDAPI)
+
+  if (HIDAPI_FOUND)
+    message(STATUS "Using HIDAPI ${HIDAPI_LIBRARIES} (includes at ${HIDAPI_INCLUDE_DIR})")
+    target_compile_definitions(hidapi_libusb INTERFACE HAVE_HIDAPI)
+    target_include_directories(hidapi_libusb INTERFACE ${HIDAPI_INCLUDE_DIR})
+    target_link_libraries(hidapi_libusb INTERFACE ${HIDAPI_LIBRARIES})
+  else (HIDAPI_FOUND)
+    message(STATUS "Could not find HIDAPI")
+  endif()
+endif()
+
+if (HIDAPI_FOUND)
+  target_sources(device PRIVATE
     device_ledger.cpp
     device_io_hid.cpp
     )
+  target_link_libraries(device PRIVATE hidapi_libusb)
 endif()
-
-set(device_headers
-  device.hpp
-  device_io.hpp
-  device_default.hpp
-  device_cold.hpp
-  log.hpp
- )
-
-if(HIDAPI_FOUND)
-  set(device_headers 
-    ${device_headers} 
-    device_ledger.hpp
-    device_io_hid.hpp
-    )
-endif()
-
-set(device_private_headers)
-
-
-beldex_private_headers(device
-  ${device_private_headers})
-
-beldex_add_library(device
-  ${device_sources}
-  ${device_headers}
-  ${device_private_headers})
-
-target_link_libraries(device
-  PUBLIC
-    ${HIDAPI_LIBRARIES}
-    cncrypto
-    ringct_basic
-    ${OPENSSL_CRYPTO_LIBRARIES}
-    ${Boost_SERIALIZATION_LIBRARY}
-  PRIVATE
-    ${EXTRA_LIBRARIES})

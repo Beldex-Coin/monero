@@ -31,17 +31,21 @@
 #include <cstddef>
 #include <cstring>
 #include <fstream>
+#include <initializer_list>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
-#include "warnings.h"
-#include "misc_log_ex.h"
+#include "common/hex.h"
+#include "common/string_util.h"
+#include "epee/warnings.h"
+#include "epee/misc_log_ex.h"
 #include "crypto/crypto.h"
 #include "crypto/hash.h"
 #include "crypto-tests.h"
-#include "../io.h"
 
-using namespace std;
+using namespace std::literals;
 using namespace crypto;
 typedef crypto::hash chash;
 
@@ -59,214 +63,285 @@ bool operator !=(const key_derivation &a, const key_derivation &b) {
 
 DISABLE_GCC_WARNING(maybe-uninitialized)
 
+size_t lineno;
+
+template <typename T>
+T extract_single(std::string_view val) {
+  if constexpr (std::is_same_v<T, bool>) {
+    if (val == "true") return true;
+    if (val == "false") return false;
+    throw std::runtime_error{"Invalid value, expected {true|false}, got " + std::string{val} + " on line " + std::to_string(lineno)};
+  } else if constexpr (std::is_integral_v<T>) {
+    T v;
+    if (!tools::parse_int(val, v))
+      throw std::runtime_error{"Invalid value, expected integer, got " + std::string{val} + " on line " + std::to_string(lineno)};
+    return v;
+  } else if constexpr (std::is_same_v<T, std::string_view>) {
+    return val;
+  } else {
+    T v;
+    if (!tools::hex_to_type(val, v))
+      throw std::runtime_error("Invalid hex [" + std::string{val} + ", size=" + std::to_string(val.size()/2) + "B], could not extract type (T size=" + std::to_string(sizeof(T)) + ") on line " + std::to_string(lineno));
+    return v;
+  }
+}
+
+template <typename T>
+std::string make_single(const T& val) {
+  if constexpr (std::is_same_v<T, bool>)
+    return val ? "true" : "false";
+  else if constexpr (std::is_integral_v<T>)
+    return std::to_string(val);
+  else if constexpr (std::is_same_v<T, std::string_view>)
+    return std::string{val};
+  else
+    return tools::type_to_hex(val);
+}
+
+template <typename... T, typename It, size_t... S>
+std::tuple<T...> extract(It it, It end, std::index_sequence<S...>) {
+  return {extract_single<T>(it[S])...};
+}
+
+template <typename... T>
+std::tuple<T...> extract(const std::vector<std::string_view>& line, size_t skip = 0) {
+  if (sizeof...(T) + skip + 1 > line.size())
+    throw std::runtime_error("Invalid data: too few elements on line " + std::to_string(lineno) + ": expected >= " + std::to_string(sizeof...(T) + skip + 1) + ", have " + std::to_string(line.size()));
+  return extract<T...>(line.begin() + skip + 1, line.end(), std::index_sequence_for<T...>{});
+}
+
+template <typename... T>
+std::string make(const T&... val) {
+  return tools::join(" ", std::initializer_list<std::string>{make_single(val)...});
+}
+
 int main(int argc, char *argv[]) {
-  TRY_ENTRY();
-  fstream input;
-  string cmd;
+  std::fstream input;
+  input.exceptions(std::ios::badbit | std::ios::failbit);
+  std::string cmd;
   size_t test = 0;
-  bool error = false;
+  size_t errors = 0;
   setup_random();
   if (argc != 2) {
-    cerr << "invalid arguments" << endl;
+      std::cerr << "Invalid arguments! Usage: " << argv[0] << " /path/to/tests.txt\n";
     return 1;
   }
-  input.open(argv[1], ios_base::in);
+  input.open(argv[1], std::ios_base::in);
+
+  std::ofstream regen;
+  regen.exceptions(std::ios::badbit | std::ios::failbit);
+  bool verbose = false;
+  if (auto* envverbose = std::getenv("VERBOSE"); envverbose && envverbose == "1"sv)
+    verbose = true;
+  if (auto* envregen = std::getenv("REGEN"); envregen && envregen == "1"sv) {
+    regen.open("tests-regen.txt", std::ios::trunc);
+    std::cerr << "Writing calculated test results to ./tests-regen.txt\n";
+  }
+
+  input.exceptions(std::ios_base::badbit);
+
+  // If a test fails, this is set to what the line would need to be to pass the test (without the leading command)
+  std::string fail_line;
+  lineno = 0;
   for (;;) {
-    ++test;
-    input.exceptions(ios_base::badbit);
-    if (!(input >> cmd)) {
+    std::vector<char> linebuf(50000); // This test file has some massive lines in it
+    input.getline(linebuf.data(), 50000);
+    if (input.eof())
       break;
+    ++lineno;
+
+    std::string_view line{linebuf.data()};
+    fail_line.clear();
+    auto test_args = tools::split(line, " ");
+    if (test_args.empty()) {
+      std::cerr << "Warning: invalid empty test line at " << argv[1] << ":" << test << "\n";
+      continue;
     }
-    input.exceptions(ios_base::badbit | ios_base::failbit | ios_base::eofbit);
+    auto& cmd = test_args[0];
     if (cmd == "check_scalar") {
-      ec_scalar scalar;
-      bool expected, actual;
-      get(input, scalar, expected);
-      actual = check_scalar(scalar);
-      if (expected != actual) {
-        goto error;
-      }
+      auto [scalar, expected] = extract<ec_scalar, bool>(test_args);
+      bool actual = check_scalar(scalar);
+      if (expected != actual)
+        fail_line = make(scalar, actual);
     } else if (cmd == "random_scalar") {
-      ec_scalar expected, actual;
-      get(input, expected);
+      auto [expected] = extract<ec_scalar>(test_args);
+      ec_scalar actual;
       random_scalar(actual);
-      if (expected != actual) {
-        goto error;
-      }
+      if (expected != actual)
+        fail_line = make(actual);
     } else if (cmd == "hash_to_scalar") {
-      vector<char> data;
-      ec_scalar expected, actual;
-      get(input, data, expected);
+      auto [data, expected] = extract<std::string_view, ec_scalar>(test_args);
+      ec_scalar actual;
       crypto::hash_to_scalar(data.data(), data.size(), actual);
-      if (expected != actual) {
-        goto error;
-      }
+      if (expected != actual)
+        fail_line = make(data, actual);
     } else if (cmd == "generate_keys") {
-      public_key expected1, actual1;
-      secret_key expected2, actual2;
-      get(input, expected1, expected2);
+      auto [expected1, expected2] = extract<public_key, secret_key>(test_args);
+      public_key actual1;
+      secret_key actual2;
       generate_keys(actual1, actual2);
-      if (expected1 != actual1 || expected2 != actual2) {
-        goto error;
-      }
+      if (expected1 != actual1 || expected2 != actual2)
+        fail_line = make(actual1, actual2);
     } else if (cmd == "check_key") {
-      public_key key;
-      bool expected, actual;
-      get(input, key, expected);
+      auto [key, expected] = extract<public_key, bool>(test_args);
+      bool actual;
       actual = check_key(key);
-      if (expected != actual) {
-        goto error;
-      }
+      if (expected != actual)
+        fail_line = make(key, actual);
     } else if (cmd == "secret_key_to_public_key") {
-      secret_key sec;
-      bool expected1, actual1;
+      auto [sec, expected1] = extract<secret_key, bool>(test_args);
+      bool actual1;
       public_key expected2, actual2;
-      get(input, sec, expected1);
-      if (expected1) {
-        get(input, expected2);
-      }
+      if (expected1)
+        std::tie(expected2) = extract<public_key>(test_args, 2);
       actual1 = secret_key_to_public_key(sec, actual2);
       if (expected1 != actual1 || (expected1 && expected2 != actual2)) {
-        goto error;
+        fail_line = make(sec, actual1);
+        if (actual1) fail_line += " " + make(actual2);
       }
     } else if (cmd == "generate_key_derivation") {
-      public_key key1;
-      secret_key key2;
-      bool expected1, actual1;
+      auto [key1, key2, expected1] = extract<public_key, secret_key, bool>(test_args);
+      bool actual1;
       key_derivation expected2, actual2;
-      get(input, key1, key2, expected1);
-      if (expected1) {
-        get(input, expected2);
-      }
+      if (expected1)
+        std::tie(expected2) = extract<key_derivation>(test_args, 3);
       actual1 = generate_key_derivation(key1, key2, actual2);
       if (expected1 != actual1 || (expected1 && expected2 != actual2)) {
-        goto error;
+        fail_line = make(key1, key2, actual1);
+        if (actual1) fail_line += " " + make(actual2);
       }
     } else if (cmd == "derive_public_key") {
-      key_derivation derivation;
-      size_t output_index;
-      public_key base;
-      bool expected1, actual1;
+      auto [derivation, output_index, base, expected1] = extract<key_derivation, size_t, public_key, bool>(test_args);
+      bool actual1;
       public_key expected2, actual2;
-      get(input, derivation, output_index, base, expected1);
-      if (expected1) {
-        get(input, expected2);
-      }
+      if (expected1)
+        std::tie(expected2) = extract<public_key>(test_args, 4);
       actual1 = derive_public_key(derivation, output_index, base, actual2);
       if (expected1 != actual1 || (expected1 && expected2 != actual2)) {
-        goto error;
+        fail_line = make(derivation, output_index, base, actual1);
+        if (actual1)
+          fail_line += " " + make(actual2);
       }
     } else if (cmd == "derive_secret_key") {
-      key_derivation derivation;
-      size_t output_index;
-      secret_key base;
-      secret_key expected, actual;
-      get(input, derivation, output_index, base, expected);
+      auto [derivation, output_index, base, expected] = extract<key_derivation, size_t, secret_key, secret_key>(test_args);
+      secret_key actual;
       derive_secret_key(derivation, output_index, base, actual);
-      if (expected != actual) {
-        goto error;
-      }
+      if (expected != actual)
+        fail_line = make(derivation, output_index, base, actual);
     } else if (cmd == "generate_signature") {
-      chash prefix_hash;
-      public_key pub;
-      secret_key sec;
-      signature expected, actual;
-      get(input, prefix_hash, pub, sec, expected);
+      auto [prefix_hash, pub, sec, expected] = extract<chash, public_key, secret_key, signature>(test_args);
+      signature actual;
       generate_signature(prefix_hash, pub, sec, actual);
-      if (expected != actual) {
-        goto error;
-      }
+      if (expected != actual)
+        fail_line = make(prefix_hash, pub, sec, actual);
     } else if (cmd == "check_signature") {
-      chash prefix_hash;
-      public_key pub;
-      signature sig;
-      bool expected, actual;
-      get(input, prefix_hash, pub, sig, expected);
-      actual = check_signature(prefix_hash, pub, sig);
-      if (expected != actual) {
-        goto error;
-      }
+      auto [prefix_hash, pub, sig, expected] = extract<chash, public_key, signature, bool>(test_args);
+      bool actual = check_signature(prefix_hash, pub, sig);
+      if (expected != actual)
+        fail_line = make(prefix_hash, pub, sig, actual);
     } else if (cmd == "hash_to_point") {
-      chash h;
-      ec_point expected, actual;
-      get(input, h, expected);
+      auto [h, expected] = extract<chash, ec_point>(test_args);
+      ec_point actual;
       hash_to_point(h, actual);
-      if (expected != actual) {
-        goto error;
-      }
+      if (expected != actual)
+        fail_line = make(h, actual);
     } else if (cmd == "hash_to_ec") {
-      public_key key;
-      ec_point expected, actual;
-      get(input, key, expected);
+      auto [key, expected] = extract<public_key, ec_point>(test_args);
+      ec_point actual;
       hash_to_ec(key, actual);
-      if (expected != actual) {
-        goto error;
-      }
+      if (expected != actual)
+        fail_line = make(key, actual);
     } else if (cmd == "generate_key_image") {
-      public_key pub;
-      secret_key sec;
-      key_image expected, actual;
-      get(input, pub, sec, expected);
+      auto [pub, sec, expected] = extract<public_key, secret_key, key_image>(test_args);
+      key_image actual;
       generate_key_image(pub, sec, actual);
-      if (expected != actual) {
-        goto error;
-      }
-    } else if (cmd == "generate_ring_signature") {
-      chash prefix_hash;
-      key_image image;
-      vector<public_key> vpubs;
-      vector<const public_key *> pubs;
-      size_t pubs_count;
+      if (expected != actual)
+        fail_line = make(pub, sec, actual);
+    } else if (cmd == "generate_ring_signature" || cmd == "check_ring_signature") {
+      bool generate = cmd == "generate_ring_signature";
+      auto [prefix_hash, image, pubs_count] = extract<chash, key_image, size_t>(test_args);
+
+      std::vector<public_key> vpubs;
+      std::vector<const public_key *> pubs;
+      vpubs.reserve(pubs_count);
+      size_t skip = 3;
+      for (size_t i = 0; i < pubs_count; i++)
+        vpubs.push_back(std::get<0>(extract<public_key>(test_args, skip+i)));
+      skip += pubs_count;
+      pubs.reserve(vpubs.size());
+      for (auto& vpub : vpubs)
+        pubs.push_back(&vpub);
+
       secret_key sec;
       size_t sec_index;
-      vector<signature> expected, actual;
-      size_t i;
-      get(input, prefix_hash, image, pubs_count);
-      vpubs.resize(pubs_count);
-      pubs.resize(pubs_count);
-      for (i = 0; i < pubs_count; i++) {
-        get(input, vpubs[i]);
-        pubs[i] = &vpubs[i];
+      if (generate) {
+        std::tie(sec, sec_index) = extract<secret_key, size_t>(test_args, skip);
+        skip += 2;
       }
-      get(input, sec, sec_index);
-      expected.resize(pubs_count);
-      getvar(input, pubs_count * sizeof(signature), expected.data());
-      actual.resize(pubs_count);
-      generate_ring_signature(prefix_hash, image, pubs.data(), pubs_count, sec, sec_index, actual.data());
-      if (expected != actual) {
-        goto error;
+
+      std::vector<signature> sigs;
+      sigs.reserve(pubs_count);
+      for (size_t i = 0; i < pubs_count; i++)
+        sigs.push_back(std::get<0>(extract<signature>(test_args, skip+i)));
+      skip += pubs_count;
+
+      std::string fail;
+      if (generate) {
+        std::vector<signature> actual(pubs_count);
+        generate_ring_signature(prefix_hash, image, pubs, sec, sec_index, actual.data());
+        if (sigs != actual)
+          for (auto& a : actual) {
+            fail += ' ';
+            fail += make(a);
+          }
+      } else { // check mode
+        auto [expected] = extract<bool>(test_args, skip++);
+        bool actual = check_ring_signature(prefix_hash, image, pubs, sigs.data());
+
+        if (expected != actual)
+          fail = actual ? " true" : " false";
       }
-    } else if (cmd == "check_ring_signature") {
-      chash prefix_hash;
-      key_image image;
-      vector<public_key> vpubs;
-      vector<const public_key *> pubs;
-      size_t pubs_count;
-      vector<signature> sigs;
-      bool expected, actual;
-      size_t i;
-      get(input, prefix_hash, image, pubs_count);
-      vpubs.resize(pubs_count);
-      pubs.resize(pubs_count);
-      for (i = 0; i < pubs_count; i++) {
-        get(input, vpubs[i]);
-        pubs[i] = &vpubs[i];
-      }
-      sigs.resize(pubs_count);
-      getvar(input, pubs_count * sizeof(signature), sigs.data());
-      get(input, expected);
-      actual = check_ring_signature(prefix_hash, image, pubs.data(), pubs_count, sigs.data());
-      if (expected != actual) {
-        goto error;
+
+      if (!fail.empty()) {
+        fail_line = make(prefix_hash, image, pubs_count);
+        for (auto& vpub : vpubs) {
+          fail_line += ' ';
+          fail_line += make(vpub);
+        }
+        fail_line += ' ';
+        if (generate)
+          fail_line += make(sec, sec_index);
+        else {
+          for (auto& s : sigs) {
+            fail_line += ' ';
+            fail_line += make(s);
+          }
+        }
+        fail_line += std::move(fail);
       }
     } else {
-      throw ios_base::failure("Unknown function: " + cmd);
+      throw std::ios_base::failure("Unknown function: " + std::string{cmd});
     }
-    continue;
-error:
-    cerr << "Wrong result on test " << test << endl;
-    error = true;
+
+    if (!fail_line.empty()) {
+      if (verbose)
+        std::cerr << "Wrong result for " << argv[1] << ":" << lineno << "\nExpected: " << line << "\nActual:   " << fail_line << "\n";
+      errors++;
+      if (regen.is_open())
+        regen << cmd << ' ' << fail_line << '\n';
+    }
+    else if (regen.is_open())
+      regen << line << '\n';
   }
-  return error ? 1 : 0;
-  CATCH_ENTRY_L0("main", 1);
+  if (errors > 0) {
+    std::cout << errors << " of " << lineno << " tests FAILED\n";
+    if (regen.is_open())
+      std::cerr << "Test errors occurred. The new results have been written to ./tests-regen.txt\n";
+    else
+      std::cerr << "Test errors occurred. To create a test file (./tests-regen.txt) based on the new results set environment variable REGEN=1\n";
+  }
+  else
+    std::cout << "All tests (" << lineno << ") passed\n";
+
+  return errors > 0;
 }

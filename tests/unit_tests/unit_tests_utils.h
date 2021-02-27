@@ -31,11 +31,11 @@
 #pragma once
 
 #include <atomic>
-#include <boost/filesystem.hpp>
+#include "common/fs.h"
 
 namespace unit_test
 {
-  extern boost::filesystem::path data_dir;
+  extern fs::path data_dir;
 
   class call_counter
   {

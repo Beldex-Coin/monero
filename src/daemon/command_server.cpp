@@ -27,390 +27,480 @@
 // STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <boost/algorithm/string.hpp>
+#include <optional>
 #include "cryptonote_config.h"
 #include "version.h"
-#include "string_tools.h"
+#include "epee/string_tools.h"
 #include "daemon/command_server.h"
 
 #include "common/beldex_integration_test_hooks.h"
 
+#if defined(BELDEX_ENABLE_INTEGRATION_TEST_HOOKS)
+#include <thread>
+#endif
 
 #undef BELDEX_DEFAULT_LOG_CATEGORY
 #define BELDEX_DEFAULT_LOG_CATEGORY "daemon"
 
 namespace daemonize {
 
-namespace p = std::placeholders;
+command_server::command_server(std::string daemon_url, const std::optional<tools::login>& login)
+  : m_parser{std::move(daemon_url), login}
+{
+  init_commands();
+}
 
-t_command_server::t_command_server(
-    uint32_t ip
-  , uint16_t port
-  , const boost::optional<tools::login>& login
-  , bool is_rpc
-  , cryptonote::core_rpc_server* rpc_server
-  )
-  : m_parser(ip, port, login, is_rpc, rpc_server)
-  , m_command_lookup()
-  , m_is_rpc(is_rpc)
+command_server::command_server(cryptonote::rpc::core_rpc_server& rpc)
+  : m_is_rpc{false}, m_parser{rpc}
+{
+  init_commands(&rpc);
+}
+
+void command_server::init_commands(cryptonote::rpc::core_rpc_server* rpc_server)
 {
   m_command_lookup.set_handler(
       "help"
-    , std::bind(&t_command_server::help, this, p::_1)
+    , [this](const auto &x) { return help(x); }
     , "help [<command>]"
     , "Show the help section or the documentation about a <command>."
     );
   m_command_lookup.set_handler(
       "print_height"
-    , std::bind(&t_command_parser_executor::print_height, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.print_height(x); }
     , "Print the local blockchain height."
     );
   m_command_lookup.set_handler(
       "print_pl"
-    , std::bind(&t_command_parser_executor::print_peer_list, &m_parser, p::_1)
-    , "print_pl [white] [gray] [<limit>]"
+    , [this](const auto &x) { return m_parser.print_peer_list(x); }
+    , "print_pl [white] [gray] [pruned] [publicrpc] [<limit>]"
     , "Print the current peer list."
     );
   m_command_lookup.set_handler(
       "print_pl_stats"
-    , std::bind(&t_command_parser_executor::print_peer_list_stats, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.print_peer_list_stats(x); }
     , "Print the peer list statistics."
     );
   m_command_lookup.set_handler(
       "print_cn"
-    , std::bind(&t_command_parser_executor::print_connections, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.print_connections(x); }
     , "Print the current connections."
     );
   m_command_lookup.set_handler(
+      "print_net_stats"
+    , [this](const auto &x) { return m_parser.print_net_stats(x); }
+    , "Print network statistics."
+    );
+  m_command_lookup.set_handler(
       "print_bc"
-    , std::bind(&t_command_parser_executor::print_blockchain_info, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.print_blockchain_info(x); }
     , "print_bc <begin_height> [<end_height>]"
     , "Print the blockchain info in a given blocks range."
     );
   m_command_lookup.set_handler(
       "print_block"
-    , std::bind(&t_command_parser_executor::print_block, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.print_block(x); }
     , "print_block <block_hash> | <block_height>"
     , "Print a given block."
     );
   m_command_lookup.set_handler(
       "print_tx"
-    , std::bind(&t_command_parser_executor::print_transaction, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.print_transaction(x); }
     , "print_tx <transaction_hash> [+hex] [+json]"
     , "Print a given transaction."
     );
   m_command_lookup.set_handler(
       "print_quorum_state"
-    , std::bind(&t_command_parser_executor::print_quorum_state, &m_parser, p::_1)
-    , "print_quorum_state <height>"
-    , "Print the quorum state for the block height."
+    , [this](const auto &x) { return m_parser.print_quorum_state(x); }
+    , "print_quorum_state [start height] [end height]"
+    , "Print the quorum state for the range of block heights, omit the height to print the latest quorum"
     );
   m_command_lookup.set_handler(
       "print_mn_key"
-    , std::bind(&t_command_parser_executor::print_mn_key, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.print_mn_key(x); }
     , "print_mn_key"
-    , "Print this daemon's master node key, if it is one and launched in master node mode."
+    , "Print this daemon's master node key, if it is one and launched in masster node mode."
     );
   m_command_lookup.set_handler(
       "print_sr"
-    , std::bind(&t_command_parser_executor::print_sr, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.print_sr(x); }
     , "print_sr <height>"
     , "Print the staking requirement for the height."
     );
   m_command_lookup.set_handler(
       "prepare_registration"
-    , std::bind(&t_command_parser_executor::prepare_registration, &m_parser)
+    , [this](const auto &) { return m_parser.prepare_registration(); }
     , "prepare_registration"
     , "Interactive prompt to prepare a master node registration command. The resulting registration command can be run in the command-line wallet to send the registration to the blockchain."
     );
   m_command_lookup.set_handler(
       "print_mn"
-    , std::bind(&t_command_parser_executor::print_mn, &m_parser, p::_1)
-    , "print_mn [<pubkey> [...]] [+json]"
+    , [this](const auto &x) { return m_parser.print_mn(x); }
+    , "print_mn [<pubkey> [...]] [+json|+detail]"
     , "Print master node registration info for the current height"
     );
   m_command_lookup.set_handler(
       "print_mn_status"
-    , std::bind(&t_command_parser_executor::print_mn_status, &m_parser, p::_1)
-    , "print_mn_status [+json]"
+    , [this](const auto &x) { return m_parser.print_mn_status(x); }
+    , "print_mn_status [+json|+detail]"
     , "Print master node registration info for this master node"
     );
   m_command_lookup.set_handler(
       "is_key_image_spent"
-    , std::bind(&t_command_parser_executor::is_key_image_spent, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.is_key_image_spent(x); }
     , "is_key_image_spent <key_image>"
     , "Print whether a given key image is in the spent key images set."
     );
   m_command_lookup.set_handler(
       "start_mining"
-    , std::bind(&t_command_parser_executor::start_mining, &m_parser, p::_1)
-    , "start_mining <addr> [<threads>] [do_background_mining] [ignore_battery]"
-    , "Start mining for specified address. Defaults to 1 thread and no background mining."
+    , [this](const auto &x) { return m_parser.start_mining(x); }
+#if defined NDEBUG
+    , "start_mining <addr> [threads=(<threads>|auto)"
+    , "Start mining for specified address. Defaults to 1 thread; use \"auto\" to autodetect optimal number of threads."
+#else
+    , "start_mining <addr> [threads=(<threads>|auto) [num_blocks=<num>]"
+    , "Start mining for specified address. Defaults to 1 thread; use \"auto\" to autodetect optimal number of threads. When num_blocks is set, continue mining until the (current_height + num_blocks) is met, irrespective of if this Daemon found those block(s) or not."
+#endif
     );
   m_command_lookup.set_handler(
       "stop_mining"
-    , std::bind(&t_command_parser_executor::stop_mining, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.stop_mining(x); }
     , "Stop mining."
     );
   m_command_lookup.set_handler(
+      "mining_status"
+    , [this](const auto &x) { return m_parser.mining_status(x); }
+    , "Show current mining status."
+    );
+  m_command_lookup.set_handler(
       "print_pool"
-    , std::bind(&t_command_parser_executor::print_transaction_pool_long, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.print_transaction_pool_long(x); }
     , "Print the transaction pool using a long format."
     );
   m_command_lookup.set_handler(
       "print_pool_sh"
-    , std::bind(&t_command_parser_executor::print_transaction_pool_short, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.print_transaction_pool_short(x); }
     , "Print transaction pool using a short format."
     );
   m_command_lookup.set_handler(
       "print_pool_stats"
-    , std::bind(&t_command_parser_executor::print_transaction_pool_stats, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.print_transaction_pool_stats(x); }
     , "Print the transaction pool's statistics."
     );
   m_command_lookup.set_handler(
       "show_hr"
-    , std::bind(&t_command_parser_executor::show_hash_rate, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.show_hash_rate(x); }
     , "Start showing the current hash rate."
     );
   m_command_lookup.set_handler(
       "hide_hr"
-    , std::bind(&t_command_parser_executor::hide_hash_rate, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.hide_hash_rate(x); }
     , "Stop showing the hash rate."
     );
   m_command_lookup.set_handler(
       "save"
-    , std::bind(&t_command_parser_executor::save_blockchain, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.save_blockchain(x); }
     , "Save the blockchain."
     );
   m_command_lookup.set_handler(
       "set_log"
-    , std::bind(&t_command_parser_executor::set_log_level, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.set_log_level(x); }
     , "set_log <level>|<{+,-,}categories>"
     , "Change the current log level/categories where <level> is a number 0-4."
     );
   m_command_lookup.set_handler(
       "diff"
-    , std::bind(&t_command_parser_executor::show_difficulty, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.show_difficulty(x); }
     , "Show the current difficulty."
     );
   m_command_lookup.set_handler(
       "status"
-    , std::bind(&t_command_parser_executor::show_status, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.show_status(x); }
     , "Show the current status."
     );
   m_command_lookup.set_handler(
       "stop_daemon"
-    , std::bind(&t_command_parser_executor::stop_daemon, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.stop_daemon(x); }
     , "Stop the daemon."
     );
   m_command_lookup.set_handler(
       "exit"
-    , std::bind(&t_command_parser_executor::stop_daemon, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.stop_daemon(x); }
     , "Stop the daemon."
     );
   m_command_lookup.set_handler(
       "print_status"
-    , std::bind(&t_command_parser_executor::print_status, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.print_status(x); }
     , "Print the current daemon status."
     );
   m_command_lookup.set_handler(
       "limit"
-    , std::bind(&t_command_parser_executor::set_limit, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.set_limit(x); }
     , "limit [<kB/s>]"
     , "Get or set the download and upload limit."
     );
   m_command_lookup.set_handler(
       "limit_up"
-    , std::bind(&t_command_parser_executor::set_limit_up, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.set_limit_up(x); }
     , "limit_up [<kB/s>]"
     , "Get or set the upload limit."
     );
   m_command_lookup.set_handler(
       "limit_down"
-    , std::bind(&t_command_parser_executor::set_limit_down, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.set_limit_down(x); }
     , "limit_down [<kB/s>]"
     , "Get or set the download limit."
     );
     m_command_lookup.set_handler(
       "out_peers"
-    , std::bind(&t_command_parser_executor::out_peers, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.out_peers(x); }
     , "out_peers <max_number>"
     , "Set the <max_number> of out peers."
     );
     m_command_lookup.set_handler(
       "in_peers"
-    , std::bind(&t_command_parser_executor::in_peers, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.in_peers(x); }
     , "in_peers <max_number>"
     , "Set the <max_number> of in peers."
     );
     m_command_lookup.set_handler(
-      "start_save_graph"
-    , std::bind(&t_command_parser_executor::start_save_graph, &m_parser, p::_1)
-    , "Start saving data for dr beldex."
-    );
-    m_command_lookup.set_handler(
-      "stop_save_graph"
-    , std::bind(&t_command_parser_executor::stop_save_graph, &m_parser, p::_1)
-    , "Stop saving data for dr beldex."
-    );
-    m_command_lookup.set_handler(
       "hard_fork_info"
-    , std::bind(&t_command_parser_executor::hard_fork_info, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.hard_fork_info(x); }
     , "Print the hard fork voting information."
     );
     m_command_lookup.set_handler(
       "bans"
-    , std::bind(&t_command_parser_executor::show_bans, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.show_bans(x); }
     , "Show the currently banned IPs."
     );
     m_command_lookup.set_handler(
       "ban"
-    , std::bind(&t_command_parser_executor::ban, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.ban(x); }
     , "ban <IP> [<seconds>]"
     , "Ban a given <IP> for a given amount of <seconds>."
     );
     m_command_lookup.set_handler(
       "unban"
-    , std::bind(&t_command_parser_executor::unban, &m_parser, p::_1)
-    , "unban <IP>"
+    , [this](const auto &x) { return m_parser.unban(x); }
+    , "unban <address>"
     , "Unban a given <IP>."
     );
     m_command_lookup.set_handler(
+      "banned"
+    , [this](const auto &x) { return m_parser.banned(x); }
+    , "banned <address>"
+    , "Check whether an <address> is banned."
+    );
+    m_command_lookup.set_handler(
       "flush_txpool"
-    , std::bind(&t_command_parser_executor::flush_txpool, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.flush_txpool(x); }
     , "flush_txpool [<txid>]"
     , "Flush a transaction from the tx pool by its <txid>, or the whole tx pool."
     );
     m_command_lookup.set_handler(
       "output_histogram"
-    , std::bind(&t_command_parser_executor::output_histogram, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.output_histogram(x); }
     , "output_histogram [@<amount>] <min_count> [<max_count>]"
     , "Print the output histogram of outputs."
     );
     m_command_lookup.set_handler(
       "print_coinbase_tx_sum"
-    , std::bind(&t_command_parser_executor::print_coinbase_tx_sum, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.print_coinbase_tx_sum(x); }
     , "print_coinbase_tx_sum <start_height> [<block_count>]"
     , "Print the sum of coinbase transactions."
     );
     m_command_lookup.set_handler(
       "alt_chain_info"
-    , std::bind(&t_command_parser_executor::alt_chain_info, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.alt_chain_info(x); }
     , "alt_chain_info [blockhash]"
     , "Print the information about alternative chains."
     );
     m_command_lookup.set_handler(
       "bc_dyn_stats"
-    , std::bind(&t_command_parser_executor::print_blockchain_dynamic_stats, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.print_blockchain_dynamic_stats(x); }
     , "bc_dyn_stats <last_block_count>"
     , "Print the information about current blockchain dynamic state."
     );
+    // TODO(beldex): Implement
+#if 0
     m_command_lookup.set_handler(
       "update"
-    , std::bind(&t_command_parser_executor::update, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.update(x); }
     , "update (check|download)"
     , "Check if an update is available, optionally downloads it if there is. Updating is not yet implemented."
     );
+#endif
     m_command_lookup.set_handler(
       "relay_tx"
-    , std::bind(&t_command_parser_executor::relay_tx, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.relay_tx(x); }
     , "relay_tx <txid>"
     , "Relay a given transaction by its <txid>."
     );
     m_command_lookup.set_handler(
       "sync_info"
-    , std::bind(&t_command_parser_executor::sync_info, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.sync_info(x); }
     , "Print information about the blockchain sync state."
     );
     m_command_lookup.set_handler(
       "pop_blocks"
-    , std::bind(&t_command_parser_executor::pop_blocks, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.pop_blocks(x); }
     , "pop_blocks <nblocks>"
     , "Remove blocks from end of blockchain"
     );
     m_command_lookup.set_handler(
       "version"
-    , std::bind(&t_command_parser_executor::version, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.version(x); }
     , "Print version information."
     );
+#if 0 // TODO(beldex): Pruning not supported because of Master Node List
     m_command_lookup.set_handler(
       "prune_blockchain"
-    , std::bind(&t_command_parser_executor::prune_blockchain, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.prune_blockchain(x); }
     , "Prune the blockchain."
     );
+#endif
     m_command_lookup.set_handler(
       "check_blockchain_pruning"
-    , std::bind(&t_command_parser_executor::check_blockchain_pruning, &m_parser, p::_1)
+    , [this](const auto &x) { return m_parser.check_blockchain_pruning(x); }
     , "Check the blockchain pruning."
     );
-}
-
-bool t_command_server::process_command_str(const std::string& cmd)
-{
-  return m_command_lookup.process_command_str(cmd);
-}
-
-bool t_command_server::process_command_vec(const std::vector<std::string>& cmd)
-{
-  bool result = m_command_lookup.process_command_vec(cmd);
-  if (!result)
-  {
-    help(std::vector<std::string>());
-  }
-  return result;
-}
+    m_command_lookup.set_handler(
+      "print_checkpoints"
+    , [this](const auto &x) { return m_parser.print_checkpoints(x); }
+    , "print_checkpoints [+json] [start height] [end height]"
+    , "Query the available checkpoints between the range, omit arguments to print the last 60 checkpoints"
+    );
+    m_command_lookup.set_handler(
+      "print_mn_state_changes"
+    , [this](const auto &x) { return m_parser.print_mn_state_changes(x); }
+    , "print_mn_state_changes <start_height> [end height]"
+    , "Query the state changes between the range, omit the last argument to scan until the current block"
+    );
+    m_command_lookup.set_handler(
+      "set_bootstrap_daemon"
+    , [this](const auto &x) { return m_parser.set_bootstrap_daemon(x); }
+    , "set_bootstrap_daemon (auto | none | host[:port] [username] [password])"
+    , "URL of a 'bootstrap' remote daemon that the connected wallets can use while this daemon is still not fully synced.\n"
+      "Use 'auto' to enable automatic public nodes discovering and bootstrap daemon switching"
+    );
+    m_command_lookup.set_handler(
+      "flush_cache"
+    , [this](const auto &x) { return m_parser.flush_cache(x); }
+    , "flush_cache [bad-txs] [bad-blocks]"
+    , "Flush the specified cache(s)."
+    );
+    m_command_lookup.set_handler(
+        "test_trigger_uptime_proof",
+        [this](const auto &) {
+          m_parser.test_trigger_uptime_proof();
+          return true;
+        },
+    "");
 
 #if defined(BELDEX_ENABLE_INTEGRATION_TEST_HOOKS)
-#include <thread>
-#endif
+    m_command_lookup.set_handler(
+      "relay_votes_and_uptime", [rpc_server](const auto&) {
+        rpc_server->on_relay_uptime_and_votes();
+        return true;
+      }
+    , ""
+    );
+    m_command_lookup.set_handler(
+      "integration_test", [rpc_server](const auto& args) {
+        bool valid_cmd = false;
+        if (args.size() == 1)
+        {
+          valid_cmd = true;
+          if (args[0] == "toggle_checkpoint_quorum")
+          {
+            integration_test::state.disable_checkpoint_quorum = !integration_test::state.disable_checkpoint_quorum;
+          }
+          else if (args[0] == "toggle_obligation_quorum")
+          {
+            integration_test::state.disable_obligation_quorum = !integration_test::state.disable_obligation_quorum;
+          }
+          else if (args[0] == "toggle_obligation_uptime_proof")
+          {
+            integration_test::state.disable_obligation_uptime_proof = !integration_test::state.disable_obligation_uptime_proof;
+          }
+          else if (args[0] == "toggle_obligation_checkpointing")
+          {
+            integration_test::state.disable_obligation_checkpointing = !integration_test::state.disable_obligation_checkpointing;
+          }
+          else
+          {
+            valid_cmd = false;
+          }
 
-bool t_command_server::start_handling(std::function<void(void)> exit_handler)
+          if (valid_cmd) std::cout << args[0] << " toggled";
+        }
+        else if (args.size() == 3)
+        {
+          uint64_t num_blocks = 0;
+          if (args[0] == "debug_mine_n_blocks" && epee::string_tools::get_xtype_from_string(num_blocks, args[2]))
+          {
+            rpc_server->on_debug_mine_n_blocks(args[1], num_blocks);
+            valid_cmd = true;
+          }
+        }
+
+        if (!valid_cmd)
+          std::cout << "integration_test invalid command";
+
+        integration_test::write_buffered_stdout();
+        return true;
+      }
+    , ""
+    );
+#endif
+}
+
+bool command_server::start_handling(std::function<void(void)> exit_handler)
 {
   if (m_is_rpc) return false;
 
 #if defined(BELDEX_ENABLE_INTEGRATION_TEST_HOOKS)
-  auto handle_shared_mem_ins_and_outs = [&]()
+  auto handle_pipe = [&]()
   {
     // TODO(doyle): Hack, don't hook into input until the daemon has completely initialised, i.e. you can print the status
-    while(!beldex::core_is_idle) {}
-    mlog_set_categories("");
+    while(!integration_test::state.core_is_idle) {}
+    mlog_set_categories(""); // TODO(doyle): We shouldn't have to do this.
 
     for (;;)
     {
-      beldex::fixed_buffer const input = beldex::read_from_stdin_shared_mem();
-      std::vector<std::string> args  = beldex::separate_stdin_to_space_delim_args(&input);
+      integration_test::write_buffered_stdout();
+      std::string const input       = integration_test::read_from_pipe();
+      std::vector<std::string> args = integration_test::space_delimit_input(input);
       {
-        boost::unique_lock<boost::mutex> scoped_lock(beldex::integration_test_mutex);
-        beldex::use_standard_cout();
-        std::cout << input.data << std::endl;
-        beldex::use_redirected_cout();
+        std::unique_lock<std::mutex> scoped_lock(integration_test::state.mutex);
+        integration_test::use_standard_cout();
+        std::cout << input << std::endl;
+        integration_test::use_redirected_cout();
       }
 
-      process_command_vec(args);
+      process_command_and_log(args);
       if (args.size() == 1 && args[0] == "exit")
       {
-        beldex::deinit_integration_test_context();
+        integration_test::deinit();
         break;
       }
 
-      beldex::write_redirected_stdout_to_shared_mem();
     }
   };
-  static std::thread handle_remote_stdin_out_thread(handle_shared_mem_ins_and_outs);
+  static std::thread handle_pipe_thread(handle_pipe);
 #endif
 
-  m_command_lookup.start_handling("", get_commands_str(), exit_handler);
+  m_command_lookup.start_handling("", get_commands_str(), std::move(exit_handler));
   return true;
 }
 
-void t_command_server::stop_handling()
+void command_server::stop_handling()
 {
   if (m_is_rpc) return;
 
   m_command_lookup.stop_handling();
 }
 
-bool t_command_server::help(const std::vector<std::string>& args)
+bool command_server::help(const std::vector<std::string>& args)
 {
   if(args.empty())
   {
@@ -423,19 +513,17 @@ bool t_command_server::help(const std::vector<std::string>& args)
   return true;
 }
 
-std::string t_command_server::get_commands_str()
+std::string command_server::get_commands_str()
 {
   std::stringstream ss;
   ss << "Beldex '" << BELDEX_RELEASE_NAME << "' (v" << BELDEX_VERSION_FULL << ")" << std::endl;
-  ss << "Commands: " << std::endl;
-  std::string usage = m_command_lookup.get_usage();
-  boost::replace_all(usage, "\n", "\n  ");
-  usage.insert(0, "  ");
-  ss << usage << std::endl;
+  ss << "Commands:\n";
+  m_command_lookup.for_each([&ss] (const std::string&, const std::string& usage, const std::string&) {
+      ss << "  " << usage << "\n"; });
   return ss.str();
 }
 
- std::string t_command_server::get_command_usage(const std::vector<std::string> &args)
+ std::string command_server::get_command_usage(const std::vector<std::string> &args)
  {
    std::pair<std::string, std::string> documentation = m_command_lookup.get_documentation(args);
    std::stringstream ss;
@@ -448,10 +536,15 @@ std::string t_command_server::get_commands_str()
      std::string usage = documentation.second.empty() ? args.front() : documentation.first;
      std::string description = documentation.second.empty() ? documentation.first : documentation.second;
      usage.insert(0, "  ");
-     ss << "Command usage: " << std::endl << usage << std::endl << std::endl;
-     boost::replace_all(description, "\n", "\n  ");
-     description.insert(0, "  ");
-     ss << "Command description: " << std::endl << description << std::endl;
+     ss << "Command usage: \n" << usage << "\n\n";
+     ss << "Command description:\n  ";
+     for (char c : description)
+     {
+       if (c == '\n')
+         ss << "\n  ";
+       else
+         ss << c;
+     }
    }
    return ss.str();
  }

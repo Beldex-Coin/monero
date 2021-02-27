@@ -32,7 +32,7 @@
 
 TEST(account, encrypt_keys)
 {
-  cryptonote::keypair recovery_key = cryptonote::keypair::generate(hw::get_device("default"));
+  cryptonote::keypair recovery_key{hw::get_device("default")};
   cryptonote::account_base account;
   crypto::secret_key key = account.generate(recovery_key.sec);
   const cryptonote::account_keys keys = account.get_keys();

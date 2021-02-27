@@ -26,12 +26,11 @@
 // STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "include_base_utils.h"
-#include "file_io_utils.h"
-#include "net/net_utils_base.h"
-#include "net/abstract_tcp_server2.h"
-#include "storages/levin_abstract_invoke2.h"
-#include "net/levin_protocol_handler_async.h"
+#include "common/file.h"
+#include "epee/net/net_utils_base.h"
+#include "epee/net/abstract_tcp_server2.h"
+#include "epee/storages/levin_abstract_invoke2.h"
+#include "epee/net/levin_protocol_handler_async.h"
 #include "fuzzer.h"
 
 namespace
@@ -68,7 +67,7 @@ namespace
     virtual int invoke(int command, const epee::span<const uint8_t> in_buff, std::string& buff_out, test_levin_connection_context& context)
     {
       m_invoke_counter.inc();
-      boost::unique_lock<boost::mutex> lock(m_mutex);
+      std::unique_lock lock{m_mutex};
       m_last_command = command;
       m_last_in_buf = std::string((const char*)in_buff.data(), in_buff.size());
       buff_out = m_invoke_out_buf;
@@ -78,7 +77,7 @@ namespace
     virtual int notify(int command, const epee::span<const uint8_t> in_buff, test_levin_connection_context& context)
     {
       m_notify_counter.inc();
-      boost::unique_lock<boost::mutex> lock(m_mutex);
+      std::unique_lock lock{m_mutex};
       m_last_command = command;
       m_last_in_buf = std::string((const char*)in_buff.data(), in_buff.size());
       return m_return_code;
@@ -124,7 +123,7 @@ namespace
     call_counter m_new_connection_counter;
     call_counter m_close_connection_counter;
 
-    boost::mutex m_mutex;
+    std::mutex m_mutex;
 
     int m_return_code;
     std::string m_invoke_out_buf;
@@ -149,11 +148,11 @@ namespace
     }
 
     // Implement epee::net_utils::i_service_endpoint interface
-    virtual bool do_send(const void* ptr, size_t cb)
+    virtual bool do_send(epee::shared_sv message)
     {
       m_send_counter.inc();
-      boost::unique_lock<boost::mutex> lock(m_mutex);
-      m_last_send_data.append(reinterpret_cast<const char*>(ptr), cb);
+      std::unique_lock lock{m_mutex};
+      m_last_send_data.append(reinterpret_cast<const char*>(message.data()), message.size());
       return m_send_return;
     }
 
@@ -168,7 +167,7 @@ namespace
     size_t send_counter() const { return m_send_counter.get(); }
 
     const std::string& last_send_data() const { return m_last_send_data; }
-    void reset_last_send_data() { boost::unique_lock<boost::mutex> lock(m_mutex); m_last_send_data.clear(); }
+    void reset_last_send_data() { std::unique_lock lock{m_mutex}; m_last_send_data.clear(); }
 
     bool send_return() const { return m_send_return; }
     void send_return(bool v) { m_send_return = v; }
@@ -181,7 +180,7 @@ namespace
     boost::asio::io_service& m_io_service;
 
     call_counter m_send_counter;
-    boost::mutex m_mutex;
+    std::mutex m_mutex;
 
     std::string m_last_send_data;
 
@@ -313,7 +312,7 @@ int LevinFuzzer::run(const std::string &filename)
   fwrite(&req_head,sizeof(req_head),1, f);
   fclose(f);
 #endif
-  if (!epee::file_io_utils::load_file_to_string(filename, s))
+  if (!tools::slurp_file(filename, s))
   {
     std::cout << "Error: failed to load file " << filename << std::endl;
     return 1;

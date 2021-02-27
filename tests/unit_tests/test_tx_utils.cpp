@@ -44,7 +44,7 @@ namespace
 
 TEST(parse_tx_extra, handles_empty_extra)
 {
-  std::vector<uint8_t> extra;;
+  std::vector<uint8_t> extra;
   std::vector<cryptonote::tx_extra_field> tx_extra_fields;
   ASSERT_TRUE(cryptonote::parse_tx_extra(extra, tx_extra_fields));
   ASSERT_TRUE(tx_extra_fields.empty());
@@ -57,8 +57,8 @@ TEST(parse_tx_extra, handles_padding_only_size_1)
   std::vector<cryptonote::tx_extra_field> tx_extra_fields;
   ASSERT_TRUE(cryptonote::parse_tx_extra(extra, tx_extra_fields));
   ASSERT_EQ(1, tx_extra_fields.size());
-  ASSERT_EQ(typeid(cryptonote::tx_extra_padding), tx_extra_fields[0].type());
-  ASSERT_EQ(1, boost::get<cryptonote::tx_extra_padding>(tx_extra_fields[0]).size);
+  ASSERT_TRUE(std::holds_alternative<cryptonote::tx_extra_padding>(tx_extra_fields[0]));
+  ASSERT_EQ(1, var::get<cryptonote::tx_extra_padding>(tx_extra_fields[0]).size);
 }
 
 TEST(parse_tx_extra, handles_padding_only_size_2)
@@ -68,23 +68,23 @@ TEST(parse_tx_extra, handles_padding_only_size_2)
   std::vector<cryptonote::tx_extra_field> tx_extra_fields;
   ASSERT_TRUE(cryptonote::parse_tx_extra(extra, tx_extra_fields));
   ASSERT_EQ(1, tx_extra_fields.size());
-  ASSERT_EQ(typeid(cryptonote::tx_extra_padding), tx_extra_fields[0].type());
-  ASSERT_EQ(2, boost::get<cryptonote::tx_extra_padding>(tx_extra_fields[0]).size);
+  ASSERT_TRUE(std::holds_alternative<cryptonote::tx_extra_padding>(tx_extra_fields[0]));
+  ASSERT_EQ(2, var::get<cryptonote::tx_extra_padding>(tx_extra_fields[0]).size);
 }
 
 TEST(parse_tx_extra, handles_padding_only_max_size)
 {
-  std::vector<uint8_t> extra(TX_EXTRA_NONCE_MAX_COUNT, 0);
+  std::vector<uint8_t> extra(cryptonote::TX_EXTRA_PADDING_MAX_COUNT, 0);
   std::vector<cryptonote::tx_extra_field> tx_extra_fields;
   ASSERT_TRUE(cryptonote::parse_tx_extra(extra, tx_extra_fields));
   ASSERT_EQ(1, tx_extra_fields.size());
-  ASSERT_EQ(typeid(cryptonote::tx_extra_padding), tx_extra_fields[0].type());
-  ASSERT_EQ(TX_EXTRA_NONCE_MAX_COUNT, boost::get<cryptonote::tx_extra_padding>(tx_extra_fields[0]).size);
+  ASSERT_TRUE(std::holds_alternative<cryptonote::tx_extra_padding>(tx_extra_fields[0]));
+  ASSERT_EQ(cryptonote::TX_EXTRA_PADDING_MAX_COUNT, var::get<cryptonote::tx_extra_padding>(tx_extra_fields[0]).size);
 }
 
 TEST(parse_tx_extra, handles_padding_only_exceed_max_size)
 {
-  std::vector<uint8_t> extra(TX_EXTRA_NONCE_MAX_COUNT + 1, 0);
+  std::vector<uint8_t> extra(cryptonote::TX_EXTRA_PADDING_MAX_COUNT + 1, 0);
   std::vector<cryptonote::tx_extra_field> tx_extra_fields;
   ASSERT_FALSE(cryptonote::parse_tx_extra(extra, tx_extra_fields));
 }
@@ -105,7 +105,7 @@ TEST(parse_tx_extra, handles_pub_key_only)
   std::vector<cryptonote::tx_extra_field> tx_extra_fields;
   ASSERT_TRUE(cryptonote::parse_tx_extra(extra, tx_extra_fields));
   ASSERT_EQ(1, tx_extra_fields.size());
-  ASSERT_EQ(typeid(cryptonote::tx_extra_pub_key), tx_extra_fields[0].type());
+  ASSERT_TRUE(std::holds_alternative<cryptonote::tx_extra_pub_key>(tx_extra_fields[0]));
 }
 
 TEST(parse_tx_extra, handles_extra_nonce_only)
@@ -115,8 +115,8 @@ TEST(parse_tx_extra, handles_extra_nonce_only)
   std::vector<cryptonote::tx_extra_field> tx_extra_fields;
   ASSERT_TRUE(cryptonote::parse_tx_extra(extra, tx_extra_fields));
   ASSERT_EQ(1, tx_extra_fields.size());
-  ASSERT_EQ(typeid(cryptonote::tx_extra_nonce), tx_extra_fields[0].type());
-  cryptonote::tx_extra_nonce extra_nonce = boost::get<cryptonote::tx_extra_nonce>(tx_extra_fields[0]);
+  ASSERT_TRUE(std::holds_alternative<cryptonote::tx_extra_nonce>(tx_extra_fields[0]));
+  cryptonote::tx_extra_nonce extra_nonce = var::get<cryptonote::tx_extra_nonce>(tx_extra_fields[0]);
   ASSERT_EQ(1, extra_nonce.nonce.size());
   ASSERT_EQ(42, extra_nonce.nonce[0]);
 }
@@ -131,33 +131,33 @@ TEST(parse_tx_extra, handles_pub_key_and_padding)
   std::vector<cryptonote::tx_extra_field> tx_extra_fields;
   ASSERT_TRUE(cryptonote::parse_tx_extra(extra, tx_extra_fields));
   ASSERT_EQ(2, tx_extra_fields.size());
-  ASSERT_EQ(typeid(cryptonote::tx_extra_pub_key), tx_extra_fields[0].type());
-  ASSERT_EQ(typeid(cryptonote::tx_extra_padding), tx_extra_fields[1].type());
+  ASSERT_TRUE(std::holds_alternative<cryptonote::tx_extra_pub_key>(tx_extra_fields[0]));
+  ASSERT_TRUE(std::holds_alternative<cryptonote::tx_extra_padding>(tx_extra_fields[1]));
 }
 
 TEST(parse_and_validate_tx_extra, is_valid_tx_extra_parsed)
 {
-  cryptonote::transaction tx = AUTO_VAL_INIT(tx);
+  cryptonote::transaction tx{};
   cryptonote::account_base acc;
   acc.generate();
   cryptonote::blobdata b = "dsdsdfsdfsf";
-  ASSERT_TRUE(cryptonote::construct_miner_tx(0, 0, 10000000000000, 1000, TEST_FEE, acc.get_keys().m_account_address, tx, b));
+  ASSERT_TRUE(cryptonote::construct_miner_tx(0, 0, 10000000000000, 1000, TEST_FEE, tx, cryptonote::beldex_miner_tx_context::miner_block(cryptonote::FAKECHAIN, acc.get_keys().m_account_address), b));
   crypto::public_key tx_pub_key = cryptonote::get_tx_pub_key_from_extra(tx);
   ASSERT_NE(tx_pub_key, crypto::null_pkey);
 }
 TEST(parse_and_validate_tx_extra, fails_on_big_extra_nonce)
 {
-  cryptonote::transaction tx = AUTO_VAL_INIT(tx);
+  cryptonote::transaction tx{};
   cryptonote::account_base acc;
   acc.generate();
-  cryptonote::blobdata b(TX_EXTRA_NONCE_MAX_COUNT + 1, 0);
-  ASSERT_FALSE(cryptonote::construct_miner_tx(0, 0, 10000000000000, 1000, TEST_FEE, acc.get_keys().m_account_address, tx, b));
+  cryptonote::blobdata b(cryptonote::TX_EXTRA_NONCE_MAX_COUNT + 1, 0);
+  ASSERT_FALSE(cryptonote::construct_miner_tx(0, 0, 10000000000000, 1000, TEST_FEE, tx, cryptonote::beldex_miner_tx_context::miner_block(cryptonote::FAKECHAIN, acc.get_keys().m_account_address), b));
 }
 TEST(parse_and_validate_tx_extra, fails_on_wrong_size_in_extra_nonce)
 {
-  cryptonote::transaction tx = AUTO_VAL_INIT(tx);
+  cryptonote::transaction tx{};
   tx.extra.resize(20, 0);
-  tx.extra[0] = TX_EXTRA_NONCE;
+  tx.extra[0] = cryptonote::TX_EXTRA_NONCE;
   tx.extra[1] = 255;
   std::vector<cryptonote::tx_extra_field> tx_extra_fields;
   ASSERT_FALSE(cryptonote::parse_tx_extra(tx.extra, tx_extra_fields));
@@ -269,21 +269,10 @@ TEST(sort_tx_extra, invalid)
   ASSERT_FALSE(cryptonote::sort_tx_extra(extra, sorted));
 }
 
-TEST(sort_tx_extra, invalid_suffix_strict)
+TEST(sort_tx_extra, invalid_suffix)
 {
   std::vector<uint8_t> sorted;
   const uint8_t extra_arr[] = {2, 9, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1};
   std::vector<uint8_t> extra(&extra_arr[0], &extra_arr[0] + sizeof(extra_arr));
   ASSERT_FALSE(cryptonote::sort_tx_extra(extra, sorted));
-}
-
-TEST(sort_tx_extra, invalid_suffix_partial)
-{
-  std::vector<uint8_t> sorted;
-  const uint8_t extra_arr[] = {2, 9, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1};
-  const uint8_t expected_arr[] = {2, 9, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1};
-  std::vector<uint8_t> extra(&extra_arr[0], &extra_arr[0] + sizeof(extra_arr));
-  ASSERT_TRUE(cryptonote::sort_tx_extra(extra, sorted, true));
-  std::vector<uint8_t> expected(&expected_arr[0], &expected_arr[0] + sizeof(expected_arr));
-  ASSERT_EQ(sorted, expected);
 }

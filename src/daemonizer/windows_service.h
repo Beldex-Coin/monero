@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -40,25 +40,14 @@ namespace windows
 {
   bool check_admin(bool & result);
 
-  bool ensure_admin(
-      std::string const & arguments
-    );
+  bool ensure_admin(std::string const &arguments);
 
-  bool install_service(
-      std::string const & service_name
-    , std::string const & arguments
-    );
+  bool install_service(char const *service_name, std::string const &arguments);
 
-  bool uninstall_service(
-      std::string const & service_name
-    );
+  bool uninstall_service(char const *service_name);
 
-  bool start_service(
-      std::string const & service_name
-    );
+  bool start_service(char const *service_name);
 
-  bool stop_service(
-      std::string const & service_name
-    );
+  bool stop_service(char const *service_name);
 }
 #endif

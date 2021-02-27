@@ -28,7 +28,8 @@
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //
 
-#include "misc_log_ex.h"
+#include <oxenmq/hex.h>
+#include "epee/misc_log_ex.h"
 #include "log.hpp"
 
 namespace hw {
@@ -36,20 +37,11 @@ namespace hw {
   #undef BELDEX_DEFAULT_LOG_CATEGORY
   #define BELDEX_DEFAULT_LOG_CATEGORY "device"
 
-  void buffer_to_str(char *to_buff,  size_t to_len, const char *buff, size_t len) {
-    CHECK_AND_ASSERT_THROW_MES(to_len > (len*2), "destination buffer too short. At least" << (len*2+1) << " bytes required");
-    for (size_t i=0; i<len; i++) {
-      sprintf(to_buff+2*i, "%.02x", (unsigned char)buff[i]);
-    }
+  void log_hexbuffer(std::string_view msg, const void* buff, size_t len) {
+    MDEBUG(msg << ": " << oxenmq::to_hex(std::string_view{reinterpret_cast<const char*>(buff), len}));
   }
 
-  void log_hexbuffer(const std::string &msg,  const char* buff, size_t len) {
-    char logstr[1025];
-    buffer_to_str(logstr, sizeof(logstr),  buff, len);
-    MDEBUG(msg<< ": " << logstr);
-  }
-
-  void log_message(const std::string &msg, const std::string &info ) {
+  void log_message(std::string_view msg, std::string_view info) {
     MDEBUG(msg << ": " << info);
   }
 
@@ -62,36 +54,22 @@ namespace hw {
 
     
     #ifdef DEBUG_HWDEVICE
-    extern crypto::secret_key dbg_viewkey;
-    extern crypto::secret_key dbg_spendkey;
-
 
     void decrypt(char* buf, size_t len) {
       #if defined(IODUMMYCRYPT_HWDEVICE) || defined(IONOCRYPT_HWDEVICE)
-      size_t i;
-      if (len == 32) {
-        //view key?
-        for (i = 0; i<32; i++) {
-          if (buf[i] != 0) break;
-        }
-        if (i == 32) {
-          memmove(buf, hw::ledger::dbg_viewkey.data, 32);
-          return;
-        }
-        //spend key?
-        for (i = 0; i<32; i++) {
-          if (buf[i] != (char)0xff) break;
-        }
-        if (i == 32) {
-          memmove(buf, hw::ledger::dbg_spendkey.data, 32);
-          return;
-        }
+
+      if (len == 32 && memcmp(dummy_view_key, buf, 32) == 0) {
+        memmove(buf, hw::ledger::dbg_viewkey.data, 32);
+        return;
+      }
+      if (len == 32 && memcmp(dummy_spend_key, buf, 32) == 0) {
+        memmove(buf, hw::ledger::dbg_spendkey.data, 32);
+        return;
       }
       #if defined(IODUMMYCRYPT_HWDEVICE)
       //std decrypt: XOR.55h
-      for (i = 0; i<len;i++) {
-          buf[i] ^= 0x55;
-        }
+      for (size_t i = 0; i < len; i++)
+        buf[i] ^= 0x55;
       #endif
       #endif
     }
@@ -128,43 +106,29 @@ namespace hw {
        return x;
     }
 
-    rct::keyV decrypt(const rct::keyV &keys) {
-        rct::keyV x ;
-        x.reserve(keys.size());
-        for (unsigned int j = 0; j<keys.size(); j++) {
-            x.push_back(decrypt(keys[j]));
-        }
-        return x;
-    }
-
     static void check(const std::string &msg, const std::string &info, const char *h, const char *d, size_t len, bool crypted) {
       char dd[32];
-      char logstr[128];
-
-      CHECK_AND_ASSERT_THROW_MES(len <= sizeof(dd), "invalid len");
-      memmove(dd,d,len);
       if (crypted) {
-        CHECK_AND_ASSERT_THROW_MES(len<=32, "encrypted data greater than 32");
-        decrypt(dd,len);
+        CHECK_AND_ASSERT_THROW_MES(len <= 32, "encrypted data greater than 32");
+        decrypt(dd, len);
+        d = dd;
       }
 
-      if (memcmp(h,dd,len)) {
-          log_message("ASSERT EQ FAIL",  msg + ": "+ info );
+      if (memcmp(h, d, len)) {
+          log_message("ASSERT EQ FAIL", msg + ": " + info);
           log_hexbuffer("    host  ", h, len);
-          log_hexbuffer("    device", dd, len);
-
+          log_hexbuffer("    device", d, len);
       } else {
-        buffer_to_str(logstr, 128,  dd, len);
-        log_message("ASSERT EQ OK",  msg + ": "+ info + ": "+ std::string(logstr) );
+        log_message("ASSERT EQ OK",  msg + ": " + info + ": " + oxenmq::to_hex(d, d+len));
       }
     }
 
-    void check32(const std::string &msg, const std::string &info, const char *h, const char *d, bool crypted) {
-      check(msg, info, h, d, 32, crypted);
+    void check32(const std::string &msg, const std::string &info, const void *h, const void *d, bool crypted) {
+      check(msg, info, reinterpret_cast<const char*>(h), reinterpret_cast<const char*>(d), 32, crypted);
     }
 
-    void check8(const std::string &msg, const std::string &info, const char *h, const char *d, bool crypted) {
-      check(msg, info, h, d, 8, crypted);
+    void check8(const std::string &msg, const std::string &info, const void *h, const void *d, bool crypted) {
+      check(msg, info, reinterpret_cast<const char*>(h), reinterpret_cast<const char*>(d), 8, crypted);
     }
     #endif
 

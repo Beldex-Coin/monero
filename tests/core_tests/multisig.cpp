@@ -32,10 +32,10 @@
 #include "cryptonote_basic/cryptonote_basic.h"
 #include "multisig/multisig.h"
 #include "common/apply_permutation.h"
+#include "common/util.h"
 #include "chaingen.h"
 #include "multisig.h"
 #include "device/device.hpp"
-using namespace epee;
 using namespace crypto;
 using namespace cryptonote;
 
@@ -166,7 +166,7 @@ bool gen_multisig_tx_validation_base::generate_with(std::vector<test_event_entry
   constexpr int block_major = 7;
   constexpr int block_minor = 7;
 
-  // create 8 miner accounts, and have them mine the next 8 blocks
+  // create 48 miner accounts, and have them mine the next 8 blocks
   // they will have a coinbase with a single out that's pseudo rct
   constexpr size_t n_coinbases = 48;
   cryptonote::account_base miner_accounts[n_coinbases];
@@ -178,13 +178,11 @@ bool gen_multisig_tx_validation_base::generate_with(std::vector<test_event_entry
     account_base &account = n < inputs ? miner_account[creator] : miner_accounts[n];
     CHECK_AND_ASSERT_MES(generator.construct_block_manually(blocks[n], *prev_block, account,
         test_generator::bf_major_ver | test_generator::bf_minor_ver | test_generator::bf_timestamp | test_generator::bf_hf_version,
-        block_major, block_minor, prev_block->timestamp + DIFFICULTY_BLOCKS_ESTIMATE_TIMESPAN * 2, // v2 has blocks twice as long
+        block_major, block_minor, prev_block->timestamp + tools::to_seconds(TARGET_BLOCK_TIME) * 2, // v2 has blocks twice as long
           crypto::hash(), 0, transaction(), std::vector<crypto::hash>(), 0),
         false, "Failed to generate block");
     events.push_back(blocks[n]);
     prev_block = blocks + n;
-    LOG_PRINT_L0("Initial miner tx " << n << ": " << obj_to_json_str(blocks[n].miner_tx));
-    LOG_PRINT_L0("in block: " << obj_to_json_str(blocks[n]));
   }
 
   // rewind
@@ -196,7 +194,7 @@ bool gen_multisig_tx_validation_base::generate_with(std::vector<test_event_entry
       cryptonote::block blk;
       CHECK_AND_ASSERT_MES(generator.construct_block_manually(blk, blk_last, miner_accounts[0],
           test_generator::bf_major_ver | test_generator::bf_minor_ver | test_generator::bf_timestamp | test_generator::bf_hf_version,
-          block_major, block_minor, blk_last.timestamp + DIFFICULTY_BLOCKS_ESTIMATE_TIMESPAN * 2, // v2 has blocks twice as long
+          block_major, block_minor, blk_last.timestamp + tools::to_seconds(TARGET_BLOCK_TIME) * 2, // v2 has blocks twice as long
           crypto::hash(), 0, transaction(), std::vector<crypto::hash>(), 0),
           false, "Failed to generate block");
       events.push_back(blk);
@@ -212,7 +210,7 @@ bool gen_multisig_tx_validation_base::generate_with(std::vector<test_event_entry
   {
     tx_pub_key[n] = get_tx_pub_key_from_extra(blocks[n].miner_tx);
     MDEBUG("tx_pub_key: " << tx_pub_key);
-    output_pub_key[n] = boost::get<txout_to_key>(blocks[n].miner_tx.vout[0].target).key;
+    output_pub_key[n] = var::get<txout_to_key>(blocks[n].miner_tx.vout[0].target).key;
     MDEBUG("output_pub_key: " << output_pub_key);
   }
 
@@ -341,7 +339,7 @@ bool gen_multisig_tx_validation_base::generate_with(std::vector<test_event_entry
     for (size_t m = 0; m <= mixin; ++m)
     {
       rct::ctkey ctkey;
-      ctkey.dest = rct::pk2rct(boost::get<txout_to_key>(blocks[m].miner_tx.vout[0].target).key);
+      ctkey.dest = rct::pk2rct(var::get<txout_to_key>(blocks[m].miner_tx.vout[0].target).key);
       MDEBUG("using " << (m == n ? "real" : "fake") << " input " << ctkey.dest);
       ctkey.mask = rct::commit(blocks[m].miner_tx.vout[0].amount, rct::identity()); // since those are coinbases, the masks are known
       src.outputs.push_back(std::make_pair(m, ctkey));
@@ -368,8 +366,9 @@ bool gen_multisig_tx_validation_base::generate_with(std::vector<test_event_entry
 #endif
   std::vector<crypto::secret_key> additional_tx_secret_keys;
   auto sources_copy = sources;
-  beldex_construct_tx_params tx_params(cryptonote::network_version_8);
-  r = construct_tx_and_get_tx_key(miner_account[creator].get_keys(), subaddresses, sources, destinations, boost::none, std::vector<uint8_t>(), tx, 0, tx_key, additional_tx_secret_keys, { rct::RangeProofBorromean, 0 }, msoutp, tx_params);
+  beldex_construct_tx_params tx_params;
+  tx_params.hf_version = cryptonote::network_version_8;
+  r = construct_tx_and_get_tx_key(miner_account[creator].get_keys(), subaddresses, sources, destinations, std::nullopt, std::vector<uint8_t>(), tx, 0, tx_key, additional_tx_secret_keys, { rct::RangeProofType::PaddedBulletproof, 3 }, msoutp, tx_params);
   CHECK_AND_ASSERT_MES(r, false, "failed to construct transaction");
 
 #ifndef NO_MULTISIG
@@ -450,8 +449,8 @@ bool gen_multisig_tx_validation_base::generate_with(std::vector<test_event_entry
   std::vector<crypto::key_derivation> additional_derivations;
   for (size_t n = 0; n < tx.vout.size(); ++n)
   {
-    CHECK_AND_ASSERT_MES(typeid(txout_to_key) == tx.vout[n].target.type(), false, "Unexpected tx out type");
-    if (is_out_to_acc_precomp(subaddresses, boost::get<txout_to_key>(tx.vout[n].target).key, derivation, additional_derivations, n, hw::get_device(("default"))))
+    CHECK_AND_ASSERT_MES(std::holds_alternative<txout_to_key>(tx.vout[n].target), false, "Unexpected tx out type");
+    if (is_out_to_acc_precomp(subaddresses, var::get<txout_to_key>(tx.vout[n].target).key, derivation, additional_derivations, n, hw::get_device(("default"))))
     {
       ++n_outs;
       CHECK_AND_ASSERT_MES(tx.vout[n].amount == 0, false, "Destination amount is not zero");
@@ -459,7 +458,7 @@ bool gen_multisig_tx_validation_base::generate_with(std::vector<test_event_entry
       crypto::secret_key scalar1;
       crypto::derivation_to_scalar(derivation, n, scalar1);
       rct::ecdhTuple ecdh_info = tx.rct_signatures.ecdhInfo[n];
-      rct::ecdhDecode(ecdh_info, rct::sk2rct(scalar1), tx.rct_signatures.type == rct::RCTTypeBulletproof2);
+      rct::ecdhDecode(ecdh_info, rct::sk2rct(scalar1), tx.rct_signatures.type == rct::RCTType::Bulletproof2 || tx.rct_signatures.type == rct::RCTType::CLSAG);
       rct::key C = tx.rct_signatures.outPk[n].mask;
       rct::addKeys2(Ctmp, ecdh_info.mask, ecdh_info.amount, rct::H);
       CHECK_AND_ASSERT_MES(rct::equalKeys(C, Ctmp), false, "Failed to decode amount");

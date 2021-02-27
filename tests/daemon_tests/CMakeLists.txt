@@ -26,14 +26,8 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-set(transfers_sources
-  transfers.cpp)
-
-set(transfers_headers)
-
 add_executable(transfers
-  ${transfers_sources}
-  ${transfers_headers})
+  transfers.cpp)
 target_link_libraries(transfers
   PRIVATE
     useragent
@@ -42,7 +36,7 @@ target_link_libraries(transfers
     cncrypto
     common
     epee
-    ${GTEST_LIBRARIES})
+    gtest)
 
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test_transfers")
 add_custom_target(test_transfers

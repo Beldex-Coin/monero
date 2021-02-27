@@ -35,13 +35,20 @@
 #endif
 #endif
 
-#include <time.h>
+#include <ctime>
 #include <atomic>
-#include <boost/filesystem.hpp>
 #include <boost/algorithm/string.hpp>
-#include "string_tools.h"
-#include "misc_os_dependent.h"
-#include "misc_log_ex.h"
+#include "epee/string_tools.h"
+#include "epee/misc_os_dependent.h"
+#include "epee/misc_log_ex.h"
+
+#ifndef USE_GHC_FILESYSTEM
+#include <filesystem>
+namespace fs { using namespace std::filesystem; }
+#else
+#include <ghc/filesystem.hpp>
+namespace fs = ghc::filesystem;
+#endif
 
 #undef BELDEX_DEFAULT_LOG_CATEGORY
 #define BELDEX_DEFAULT_LOG_CATEGORY "logging"
@@ -82,7 +89,7 @@ std::string mlog_get_default_log_path(const char *default_filename)
   else
     default_log_file = default_filename;
 
-  return (boost::filesystem::path(default_log_folder) / boost::filesystem::path(default_log_file)).string();
+  return (fs::u8path(default_log_folder) / fs::u8path(default_log_file)).u8string();
 }
 
 static void mlog_set_common_prefix()
@@ -100,7 +107,7 @@ static const char *get_default_categories(int level)
   switch (level)
   {
     case 0:
-      categories = "*:WARNING,net:FATAL,net.http:FATAL,net.p2p:FATAL,net.cn:FATAL,global:INFO,verify:FATAL,stacktrace:INFO,logging:INFO,msgwriter:INFO";
+      categories = "*:WARNING,net:FATAL,net.http:FATAL,net.p2p:FATAL,net.cn:FATAL,global:INFO,verify:FATAL,serialization:FATAL,logging:INFO,msgwriter:INFO";
       break;
     case 1:
       categories = "*:INFO,global:INFO,stacktrace:INFO,logging:INFO,msgwriter:INFO,perf.*:DEBUG";
@@ -173,52 +180,27 @@ void mlog_configure(const std::string &filename_base, bool console, const std::s
     }
     if (max_log_files != 0)
     {
-      std::vector<boost::filesystem::path> found_files;
-      const boost::filesystem::directory_iterator end_itr;
-      const boost::filesystem::path filename_base_path(filename_base);
-      const boost::filesystem::path parent_path = filename_base_path.has_parent_path() ? filename_base_path.parent_path() : ".";
-      for (boost::filesystem::directory_iterator iter(parent_path); iter != end_itr; ++iter)
+      std::vector<fs::path> found_files;
+      const auto filename_base_path = fs::u8path(filename_base);
+      const auto parent_path = filename_base_path.has_parent_path() ? filename_base_path.parent_path() : fs::path(".");
+      for (const auto& p : fs::directory_iterator{parent_path})
       {
-        const std::string filename = iter->path().string();
+        const std::string filename = p.path().u8string();
         if (filename.size() >= filename_base.size() && std::memcmp(filename.data(), filename_base.data(), filename_base.size()) == 0)
-        {
-          found_files.push_back(iter->path());
-        }
+          found_files.push_back(p.path());
       }
+
       if (found_files.size() >= max_log_files)
       {
-        std::sort(found_files.begin(), found_files.end(), [](const boost::filesystem::path &a, const boost::filesystem::path &b) {
-          boost::system::error_code ec;
-          std::time_t ta = boost::filesystem::last_write_time(boost::filesystem::path(a), ec);
-          if (ec)
-          {
-            MERROR("Failed to get timestamp from " << a << ": " << ec);
-            ta = std::time(nullptr);
-          }
-          std::time_t tb = boost::filesystem::last_write_time(boost::filesystem::path(b), ec);
-          if (ec)
-          {
-            MERROR("Failed to get timestamp from " << b << ": " << ec);
-            tb = std::time(nullptr);
-          }
-          static_assert(std::is_integral<time_t>(), "bad time_t");
-          return ta < tb;
+        std::sort(found_files.begin(), found_files.end(), [](auto& a, auto& b) {
+          std::error_code ec;
+          return fs::last_write_time(a, ec) < fs::last_write_time(b, ec);
         });
         for (size_t i = 0; i <= found_files.size() - max_log_files; ++i)
         {
-          try
-          {
-            boost::system::error_code ec;
-            boost::filesystem::remove(found_files[i], ec);
-            if (ec)
-            {
-              MERROR("Failed to remove " << found_files[i] << ": " << ec);
-            }
-          }
-          catch (const std::exception &e)
-          {
-            MERROR("Failed to remove " << found_files[i] << ": " << e.what());
-          }
+          std::error_code ec;
+          if (!fs::remove(found_files[i], ec))
+            MERROR("Failed to remove " << found_files[i] << ": " << ec.message());
         }
       }
     }
@@ -471,5 +453,58 @@ void reset_console_color() {
 }
 
 }
+
+static bool mlog(el::Level level, const char *category, const char *format, va_list ap) noexcept
+{
+  int size = 0;
+  char *p = NULL;
+  va_list apc;
+  bool ret = true;
+
+  /* Determine required size */
+  va_copy(apc, ap);
+  size = vsnprintf(p, size, format, apc);
+  va_end(apc);
+  if (size < 0)
+    return false;
+
+  size++;             /* For '\0' */
+  p = (char*)malloc(size);
+  if (p == NULL)
+    return false;
+
+  size = vsnprintf(p, size, format, ap);
+  if (size < 0)
+  {
+    free(p);
+    return false;
+  }
+
+  try
+  {
+    /* TODO(loki): when pulling upstream epee changes change this to:
+    MCLOG(level, category, el::Color::Default, p);
+    */
+    MCLOG(level, category, p);
+  }
+  catch(...)
+  {
+    ret = false;
+  }
+  free(p);
+
+  return ret;
+}
+
+#define DEFLOG(fun,lev) \
+  bool m##fun(const char *category, const char *fmt, ...) { va_list ap; va_start(ap, fmt); bool ret = mlog(el::Level::lev, category, fmt, ap); va_end(ap); return ret; }
+
+DEFLOG(error, Error)
+DEFLOG(warning, Warning)
+DEFLOG(info, Info)
+DEFLOG(debug, Debug)
+DEFLOG(trace, Trace)
+
+#undef DEFLOG
 
 #endif //_MLOG_H_

@@ -29,8 +29,8 @@
 #include "gtest/gtest.h"
 
 #include <stdint.h>
-#include "misc_log_ex.h"
-#include "memwipe.h"
+#include "epee/misc_log_ex.h"
+#include "epee/memwipe.h"
 
 // Probably won't catch the optimized out case, but at least we test
 // it works in the normal case

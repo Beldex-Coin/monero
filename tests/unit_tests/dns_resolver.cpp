@@ -158,7 +158,16 @@ TEST(DNSResolver, GetTXTRecord)
   EXPECT_STREQ("donate.getmonero.org", addr.c_str());
 }
 
-bool is_equal(const char *s, const std::vector<std::string> &v) { return v.size() == 1 && v[0] == s; }
+TEST(DNSResolver, GetMulti)
+{
+  auto records = tools::DNSResolver::instance().get_many(tools::DNS_TYPE_A, {"beldex.io", "example.invalid", "lokinet.org"});
+  EXPECT_EQ(records.size(), 3);
+  EXPECT_TRUE(records[0].size() > 0);
+  EXPECT_EQ(records[1].size(), 0);
+  EXPECT_TRUE(records[2].size() > 0);
+}
+
+std::vector<std::string> testval(const char* s) { return {{s}}; }
 
 TEST(DNS_PUBLIC, empty) { EXPECT_TRUE(tools::dns_utils::parse_dns_public("").empty()); }
 TEST(DNS_PUBLIC, default) { EXPECT_TRUE(tools::dns_utils::parse_dns_public("tcp").size() > 0); }
@@ -171,5 +180,5 @@ TEST(DNS_PUBLIC, invalid_ip_num4_range) { EXPECT_TRUE(tools::dns_utils::parse_dn
 TEST(DNS_PUBLIC, invalid_ip_dot) { EXPECT_TRUE(tools::dns_utils::parse_dns_public("tcp://3.4.5.6.").empty()); }
 TEST(DNS_PUBLIC, invalid_ip_num5) { EXPECT_TRUE(tools::dns_utils::parse_dns_public("tcp://3.4.5.6.7").empty()); }
 TEST(DNS_PUBLIC, invalid_ip_4_missing) { EXPECT_TRUE(tools::dns_utils::parse_dns_public("tcp://3.4..7").empty()); }
-TEST(DNS_PUBLIC, valid_ip_lo) { EXPECT_TRUE(is_equal("127.0.0.1", tools::dns_utils::parse_dns_public("tcp://127.0.0.1"))); }
-TEST(DNS_PUBLIC, valid_ip) { EXPECT_TRUE(is_equal("3.4.5.6", tools::dns_utils::parse_dns_public("tcp://3.4.5.6"))); }
+TEST(DNS_PUBLIC, valid_ip_lo) { EXPECT_EQ(testval("127.0.0.1"), tools::dns_utils::parse_dns_public("tcp://127.0.0.1")); }
+TEST(DNS_PUBLIC, valid_ip) { EXPECT_EQ(testval("3.4.5.6"), tools::dns_utils::parse_dns_public("tcp://3.4.5.6")); }

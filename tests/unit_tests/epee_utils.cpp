@@ -27,6 +27,7 @@
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <array>
+#include <boost/predef/other/endian.h>
 #include <boost/endian/conversion.hpp>
 #include <boost/range/algorithm/equal.hpp>
 #include <boost/range/algorithm_ext/iota.hpp>
@@ -35,6 +36,7 @@
 #include <iterator>
 #include <string>
 #include <sstream>
+#include <type_traits>
 #include <vector>
 
 #ifndef _WIN32
@@ -43,14 +45,16 @@
 
 #include "boost/archive/portable_binary_iarchive.hpp"
 #include "boost/archive/portable_binary_oarchive.hpp"
-#include "hex.h"
-#include "net/net_utils_base.h"
-#include "net/local_ip.h"
-#include "net/buffer.h"
+#include "epee/shared_sv.h"
+#include "crypto/crypto.h"
+#include "epee/hex.h"
+#include "epee/net/net_utils_base.h"
+#include "epee/net/local_ip.h"
+#include "epee/net/buffer.h"
 #include "p2p/net_peerlist_boost_serialization.h"
-#include "span.h"
-#include "string_tools.h"
-#include "storages/parserse_base_utils.h"
+#include "epee/span.h"
+#include "epee/string_tools.h"
+#include "epee/storages/parserse_base_utils.h"
 
 namespace
 {
@@ -135,7 +139,7 @@ namespace
     EXPECT_FALSE( lhs >= rhs );  \
     EXPECT_TRUE( rhs >= lhs )
 
-  #ifdef BOOST_LITTLE_ENDIAN
+  #if BOOST_ENDIAN_LITTLE_BYTE
     #define CHECK_LESS_ENDIAN(lhs, rhs) CHECK_LESS( rhs , lhs )
   #else
     #define CHECK_LESS_ENDIAN(lhs, rhs) CHECK_LESS( lhs , rhs )
@@ -374,6 +378,48 @@ TEST(Span, ToMutSpan)
   EXPECT_EQ((std::vector<unsigned>{1, 2, 3, 4}), mut);
 }
 
+static_assert(std::is_default_constructible_v<epee::shared_sv>);
+static_assert(std::is_move_constructible_v<epee::shared_sv>);
+static_assert(std::is_copy_constructible_v<epee::shared_sv>);
+static_assert(std::is_move_assignable_v<epee::shared_sv>);
+static_assert(std::is_copy_assignable_v<epee::shared_sv>);
+static_assert(std::is_nothrow_default_constructible_v<epee::shared_sv>);
+static_assert(std::is_nothrow_move_constructible_v<epee::shared_sv>);
+static_assert(std::is_nothrow_move_assignable_v<epee::shared_sv>);
+
+TEST(SharedSV, Tests)
+{
+  epee::shared_sv slice{};
+  auto& view = slice.view;
+
+  EXPECT_TRUE(view.empty());
+  EXPECT_EQ(0u, slice.extract_prefix(0).size());
+  EXPECT_EQ(0u, slice.extract_prefix(1).size());
+
+  using namespace std::literals;
+  epee::shared_sv from_str{"abcdef"s};
+  EXPECT_EQ("abcdef"sv, from_str.view);
+  auto sv2 = from_str.extract_prefix(4);
+  EXPECT_EQ(4, sv2.size());
+  EXPECT_EQ(2, from_str.size());
+  auto sv3 = sv2.extract_prefix(1);
+  EXPECT_EQ("a"sv, sv3.view);
+  EXPECT_EQ("bcd"sv, sv2.view);
+  EXPECT_EQ("ef"sv, from_str.view);
+  EXPECT_EQ(3, from_str.ptr.use_count());
+  sv2 = {};
+  EXPECT_EQ(2, from_str.ptr.use_count());
+  sv3 = {};
+  EXPECT_EQ(1, from_str.ptr.use_count());
+  auto ptr = from_str.ptr;
+  from_str = {};
+  EXPECT_EQ(1, ptr.use_count());
+  ptr.reset();
+  EXPECT_EQ(0, from_str.size());
+  EXPECT_EQ(0, sv2.size());
+  EXPECT_EQ(0, sv3.size());
+}
+
 TEST(ToHex, String)
 {
   EXPECT_TRUE(epee::to_hex::string(nullptr).empty());
@@ -387,6 +433,25 @@ TEST(ToHex, String)
     std_to_hex(all_bytes), epee::to_hex::string(epee::to_span(all_bytes))
   );
 
+}
+
+TEST(FromHex, String)
+{
+    // the source data to encode and decode
+    std::vector<uint8_t> source{{ 0x00, 0xFF, 0x0F, 0xF0 }};
+
+    // encode and decode the data
+    auto hex = epee::to_hex::string({ source.data(), source.size() });
+    auto decoded = epee::from_hex::vector(hex);
+
+    // encoded should be twice the size and should decode to the exact same data
+    EXPECT_EQ(source.size() * 2, hex.size());
+    EXPECT_EQ(source, decoded);
+
+    // we will now create a padded hex string, we want to explicitly allow
+    // decoding it this way also, ignoring spaces and colons between the numbers
+    hex.assign("00:ff 0f:f0");
+    EXPECT_EQ(source, epee::from_hex::vector(hex));
 }
 
 TEST(ToHex, Array)
@@ -416,59 +481,6 @@ TEST(ToHex, Ostream)
   expected.append(std_to_hex(all_bytes));
   epee::to_hex::buffer(out, epee::to_span(all_bytes));
   EXPECT_EQ(expected, out.str());
-}
-
-TEST(ToHex, Formatted)
-{
-  std::stringstream out;
-  std::string expected{"<>"};
-
-  epee::to_hex::formatted(out, nullptr);
-  EXPECT_EQ(expected, out.str());
-
-  expected.append("<ffab0100>");
-  epee::to_hex::formatted(out, epee::as_byte_span("\xFF\xAB\x01"));
-  EXPECT_EQ(expected, out.str());
-
-  const std::vector<unsigned char> all_bytes = get_all_bytes();
-
-  expected.append("<").append(std_to_hex(all_bytes)).append(">");
-  epee::to_hex::formatted(out, epee::to_span(all_bytes));
-  EXPECT_EQ(expected, out.str());
-}
-
-TEST(StringTools, BuffToHex)
-{
-  const std::vector<unsigned char> all_bytes = get_all_bytes();
-
-  EXPECT_EQ(
-    std_to_hex(all_bytes),
-    (epee::string_tools::buff_to_hex_nodelimer(
-      std::string{reinterpret_cast<const char*>(all_bytes.data()), all_bytes.size()}
-    ))
-  );
-}
-
-TEST(StringTools, PodToHex)
-{
-  struct some_pod { unsigned char data[4]; };
-  EXPECT_EQ(
-    std::string{"ffab0100"},
-    (epee::string_tools::pod_to_hex(some_pod{{0xFF, 0xAB, 0x01, 0x00}}))
-  );
-}
-
-TEST(StringTools, ParseHex)
-{
-  static const char data[] = "a10b68c2";
-  for (size_t i = 0; i < sizeof(data); i += 2)
-  {
-    std::string res;
-    ASSERT_TRUE(epee::string_tools::parse_hexstr_to_binbuff(std::string(data, i), res));
-    std::string hex = epee::string_tools::buff_to_hex_nodelimer(res);
-    ASSERT_EQ(hex.size(), i);
-    ASSERT_EQ(memcmp(data, hex.data(), i), 0);
-  }
 }
 
 TEST(StringTools, ParseNotHex)
@@ -545,6 +557,8 @@ TEST(StringTools, GetIpInt32)
 
 TEST(NetUtils, IPv4NetworkAddress)
 {
+  static_assert(epee::net_utils::ipv4_network_address::get_type_id() == epee::net_utils::address_type::ipv4, "bad ipv4 type id");
+
   const auto ip1 = boost::endian::native_to_big(0x330012FFu);
   const auto ip_loopback = boost::endian::native_to_big(0x7F000001u);
   const auto ip_local = boost::endian::native_to_big(0x0A000000u);
@@ -555,7 +569,7 @@ TEST(NetUtils, IPv4NetworkAddress)
   EXPECT_STREQ("51.0.18.255", address1.host_str().c_str());
   EXPECT_FALSE(address1.is_loopback());
   EXPECT_FALSE(address1.is_local());
-  EXPECT_EQ(epee::net_utils::ipv4_network_address::ID, address1.get_type_id());
+  EXPECT_EQ(epee::net_utils::ipv4_network_address::get_type_id(), address1.get_type_id());
   EXPECT_EQ(ip1, address1.ip());
   EXPECT_EQ(65535, address1.port());
   EXPECT_TRUE(epee::net_utils::ipv4_network_address{std::move(address1)} == address1);
@@ -568,7 +582,7 @@ TEST(NetUtils, IPv4NetworkAddress)
   EXPECT_STREQ("127.0.0.1", loopback.host_str().c_str());
   EXPECT_TRUE(loopback.is_loopback());
   EXPECT_FALSE(loopback.is_local());
-  EXPECT_EQ(epee::net_utils::ipv4_network_address::ID, address1.get_type_id());
+  EXPECT_EQ(epee::net_utils::ipv4_network_address::get_type_id(), address1.get_type_id());
   EXPECT_EQ(ip_loopback, loopback.ip());
   EXPECT_EQ(0, loopback.port());
 
@@ -624,7 +638,9 @@ TEST(NetUtils, NetworkAddress)
     constexpr static bool is_local() noexcept { return false; }
     static std::string str() { return {}; }
     static std::string host_str() { return {}; }
-    constexpr static uint8_t get_type_id() noexcept { return uint8_t(-1); }
+    constexpr static epee::net_utils::address_type get_type_id() noexcept { return epee::net_utils::address_type(-1); }
+    constexpr static epee::net_utils::zone get_zone() noexcept { return epee::net_utils::zone::invalid; }
+    constexpr static bool is_blockable() noexcept { return false; }
   };
 
   const epee::net_utils::network_address empty;
@@ -634,7 +650,9 @@ TEST(NetUtils, NetworkAddress)
   EXPECT_STREQ("<none>", empty.host_str().c_str());
   EXPECT_FALSE(empty.is_loopback());
   EXPECT_FALSE(empty.is_local());
-  EXPECT_EQ(0, empty.get_type_id());
+  EXPECT_EQ(epee::net_utils::address_type::invalid, empty.get_type_id());
+  EXPECT_EQ(epee::net_utils::zone::invalid, empty.get_zone());
+  EXPECT_FALSE(empty.is_blockable());
   EXPECT_THROW(empty.as<custom_address>(), std::bad_cast);
 
   epee::net_utils::network_address address1{
@@ -650,7 +668,9 @@ TEST(NetUtils, NetworkAddress)
   EXPECT_STREQ("51.0.18.255", address1.host_str().c_str());
   EXPECT_FALSE(address1.is_loopback());
   EXPECT_FALSE(address1.is_local());
-  EXPECT_EQ(epee::net_utils::ipv4_network_address::ID, address1.get_type_id());
+  EXPECT_EQ(epee::net_utils::ipv4_network_address::get_type_id(), address1.get_type_id());
+  EXPECT_EQ(epee::net_utils::zone::public_, address1.get_zone());
+  EXPECT_TRUE(address1.is_blockable());
   EXPECT_NO_THROW(address1.as<epee::net_utils::ipv4_network_address>());
   EXPECT_THROW(address1.as<custom_address>(), std::bad_cast);
 
@@ -667,7 +687,9 @@ TEST(NetUtils, NetworkAddress)
   EXPECT_STREQ("127.0.0.1", loopback.host_str().c_str());
   EXPECT_TRUE(loopback.is_loopback());
   EXPECT_FALSE(loopback.is_local());
-  EXPECT_EQ(epee::net_utils::ipv4_network_address::ID, address1.get_type_id());
+  EXPECT_EQ(epee::net_utils::ipv4_network_address::get_type_id(), address1.get_type_id());
+  EXPECT_EQ(epee::net_utils::zone::public_, address1.get_zone());
+  EXPECT_EQ(epee::net_utils::ipv4_network_address::get_type_id(), address1.get_type_id());
 
   const epee::net_utils::network_address local{
     epee::net_utils::ipv4_network_address{ip_local, 8080}
@@ -854,16 +876,15 @@ TEST(parsing, isdigit)
 
 TEST(parsing, number)
 {
-  boost::string_ref val;
+  std::string_view val;
   std::string s;
-  std::string::const_iterator i;
 
   // the parser expects another character to end the number, and accepts things
   // that aren't numbers, as it's meant as a pre-filter for strto* functions,
   // so we just check that numbers get accepted, but don't test non numbers
 
   s = "0 ";
-  i = s.begin();
+  auto i = s.begin();
   epee::misc_utils::parse::match_number(i, s.end(), val);
   ASSERT_EQ(val, "0");
 
@@ -916,4 +937,21 @@ TEST(parsing, number)
   i = s.begin();
   epee::misc_utils::parse::match_number(i, s.end(), val);
   ASSERT_EQ(val, "+9.34e+03");
+}
+
+TEST(parsing, unicode)
+{
+  std::string bs;
+  std::string s;
+  std::string::const_iterator si;
+
+  s = "\"\""; si = s.begin(); ASSERT_TRUE(epee::misc_utils::parse::match_string(si, s.cend(), bs)); ASSERT_EQ(bs, "");
+  s = "\"\\u0000\""; si = s.begin(); ASSERT_TRUE(epee::misc_utils::parse::match_string(si, s.cend(), bs)); ASSERT_EQ(bs, std::string(1, '\0'));
+  s = "\"\\u0020\""; si = s.begin(); ASSERT_TRUE(epee::misc_utils::parse::match_string(si, s.cend(), bs)); ASSERT_EQ(bs, " ");
+  s = "\"\\u1\""; si = s.begin(); ASSERT_FALSE(epee::misc_utils::parse::match_string(si, s.cend(), bs));
+  s = "\"\\u12\""; si = s.begin(); ASSERT_FALSE(epee::misc_utils::parse::match_string(si, s.cend(), bs));
+  s = "\"\\u123\""; si = s.begin(); ASSERT_FALSE(epee::misc_utils::parse::match_string(si, s.cend(), bs));
+  s = "\"\\u1234\""; si = s.begin(); ASSERT_TRUE(epee::misc_utils::parse::match_string(si, s.cend(), bs)); ASSERT_EQ(bs, "ሴ");
+  s = "\"foo\\u1234bar\""; si = s.begin(); ASSERT_TRUE(epee::misc_utils::parse::match_string(si, s.cend(), bs)); ASSERT_EQ(bs, "fooሴbar");
+  s = "\"\\u3042\\u307e\\u3084\\u304b\\u3059\""; si = s.begin(); ASSERT_TRUE(epee::misc_utils::parse::match_string(si, s.cend(), bs)); ASSERT_EQ(bs, "あまやかす");
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -73,15 +73,18 @@ void hash_process(union hash_state *state, const uint8_t *buf, size_t count);
 
 #endif
 
-enum {
-  HASH_SIZE = 32,
+enum
+{
+  HASH_SIZE      = 32,
   HASH_DATA_AREA = 136
 };
 
+#define CN_TURTLE_PAGE_SIZE 262144
 void cn_fast_hash(const void *data, size_t length, char *hash);
-void cn_slow_hash(const void *data, size_t length, char *hash, int variant, int prehashed);
-void cn_conceal_slow_hash_v0(const void *data, size_t length, char *hash);
-
+void cn_turtle_hash(const void *data, size_t length, char *hash, int light, int variant, int prehashed, uint32_t scratchpad, uint32_t iterations);
+#ifdef ENABLE_MONERO_SLOW_HASH
+void cn_monero_hash(const void *data, size_t length, char *hash, int variant, int prehashed);
+#endif
 
 void hash_extra_blake(const void *data, size_t length, char *hash);
 void hash_extra_groestl(const void *data, size_t length, char *hash);
@@ -89,3 +92,10 @@ void hash_extra_jh(const void *data, size_t length, char *hash);
 void hash_extra_skein(const void *data, size_t length, char *hash);
 
 void tree_hash(const char (*hashes)[HASH_SIZE], size_t count, char *root_hash);
+
+void rx_slow_hash_allocate_state(void);
+void rx_slow_hash_free_state(void);
+uint64_t rx_seedheight(const uint64_t height);
+void rx_seedheights(const uint64_t height, uint64_t *seed_height, uint64_t *next_height);
+void rx_slow_hash(const uint64_t mainheight, const uint64_t seedheight, const char *seedhash, const void *data, size_t length, char *hash, int miners, int is_alt);
+void rx_reorg(const uint64_t split_height);

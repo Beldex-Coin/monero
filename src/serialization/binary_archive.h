@@ -1,4 +1,5 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2018-2020, The Beldex Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -30,202 +31,252 @@
 
 /*! \file binary_archive.h
  *
- * Portable (low-endian) binary archive */
+ * Portable, little-endian binary archive */
 #pragma once
 
 #include <cassert>
-#include <iostream>
+#include <ostream>
+#include <istream>
 #include <iterator>
-#include <boost/type_traits/make_unsigned.hpp>
+#include <type_traits>
+#include <string>
+#include <string_view>
+#include <boost/endian/conversion.hpp>
+
+#include "base.h"
 
 #include "common/varint.h"
-#include "warnings.h"
 
-/* I have no clue what these lines means */
-PUSH_WARNINGS
-DISABLE_VS_WARNINGS(4244)
+namespace serialization {
 
-//TODO: fix size_t warning in x32 platform
+using namespace std::literals;
 
-/*! \struct binary_archive_base
- *
- * \brief base for the binary archive type
- * 
- * \detailed It isn't used outside of this file, which its only
- * purpse is to define the functions used for the binary_archive. Its
- * a header, basically. I think it was declared simply to save typing...
- */
-template <class Stream, bool IsSaving>
-struct binary_archive_base
-{
-  typedef Stream stream_type;
-  typedef binary_archive_base<Stream, IsSaving> base_type;
-  typedef boost::mpl::bool_<IsSaving> is_saving;
+// Serialization of signed types goes via a reinterpret_cast to the unsigned type, which means we
+// need a 2s complement architecture (which is pretty much certain but check just in case).
+static_assert(-1 == ~0, "Non 2s-complement architecture not supported!");
 
-  typedef uint8_t variant_tag_type;
+using binary_variant_tag_type = uint8_t;
 
-  explicit binary_archive_base(stream_type &s) : stream_(s) { }
-  
-  /* definition of standard API functions */
-  void tag(const char *) { }
-  void begin_object() { }
-  void end_object() { }
-  void begin_variant() { }
-  void end_variant() { }
-  /* I just want to leave a comment saying how this line really shows
-     flaws in the ownership model of many OOP languages, that is all. */
-  stream_type &stream() { return stream_; } 
+// RAII class for `begin_array()`.  This particular implementation is a no-op.
+template <class Archive>
+struct binary_archive_nested_array {
+  Archive& ar;
 
-protected:
-  stream_type &stream_;
+  // Call before writing an element to add a delimiter.  (For binary_archive this is a no-op).
+  // Returns the archive itself, allowing you to write:
+  // 
+  //     auto arr = ar.begin_array();
+  //     for (auto& val : whatever)
+  //       value(arr.element(), val);
+  //
+  Archive& element() { return ar; }
+  ~binary_archive_nested_array() {} // Explicitly empty constructor to silent unused variable warnings
 };
 
-/* \struct binary_archive
+// Do-nothing object for the RAII `begin_object` interface.
+struct binary_archive_nested_object {
+  ~binary_archive_nested_object() {} // As above.
+};
+
+/* \struct binary_unarchiver
  *
- * \brief the actually binary archive type
- *
- * \detailed The boolean template argument /a W is the is_saving
- * parameter for binary_archive_base.
- *
- * The is_saving parameter says whether the archive is being read from
- * (false) or written to (true)
+ * \brief the deserializer class for a binary archive
  */
-template <bool W>
-struct binary_archive;
-
-
-template <>
-struct binary_archive<false> : public binary_archive_base<std::istream, false>
+class binary_unarchiver : public deserializer
 {
+public:
+  using variant_tag_type = binary_variant_tag_type;
 
-  explicit binary_archive(stream_type &s) : base_type(s) {
-    stream_type::streampos pos = stream_.tellg();
+  explicit binary_unarchiver(std::istream& s) : stream_{s} {
+    auto pos = stream_.tellg();
     stream_.seekg(0, std::ios_base::end);
     eof_pos_ = stream_.tellg();
     stream_.seekg(pos);
+    enable_stream_exceptions();
   }
 
-  template <class T>
+  /// Serializes a signed integer (by reinterpreting it as unsigned on the wire)
+  template <class T, std::enable_if_t<std::is_integral_v<T> && std::is_signed_v<T>, int> = 0>
   void serialize_int(T &v)
   {
-    serialize_uint(*(typename boost::make_unsigned<T>::type *)&v);
+    serialize_int(reinterpret_cast<std::make_unsigned_t<T>&>(v));
   }
 
-  /*! \fn serialize_uint
-   *
-   * \brief serializes an unsigned integer
-   */
-  template <class T>
-  void serialize_uint(T &v, size_t width = sizeof(T))
+  /// Serializes an unsigned integer
+  template <class T, std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T>, int> = 0>
+  void serialize_int(T &v)
   {
-    T ret = 0;
-    unsigned shift = 0;
-    for (size_t i = 0; i < width; i++) {
-      //std::cerr << "tell: " << stream_.tellg() << " value: " << ret << std::endl;
-      char c;
-      stream_.get(c);
-      T b = (unsigned char)c;
-      ret += (b << shift);	// can this be changed to OR, i think it can.
-      shift += 8;
-    }
-    v = ret;
+    stream_.read(reinterpret_cast<char*>(&v), sizeof(T));
+    if constexpr (sizeof(T) > 1)
+      boost::endian::little_to_native_inplace(v);
   }
-  
-  void serialize_blob(void *buf, size_t len, const char *delimiter="")
+
+  /// Serializes binary data of a given size by reading it directly into the given buffer
+  void serialize_blob(void* buf, size_t len, [[maybe_unused]] std::string_view delimiter=""sv)
   {
-    stream_.read((char *)buf, len);
+    stream_.read(static_cast<char*>(buf), len);
   }
-  
+
+  /// Serializes an integer using varint encoding
   template <class T>
   void serialize_varint(T &v)
   {
-    serialize_uvarint(*(typename boost::make_unsigned<T>::type *)(&v));
+    serialize_uvarint(*reinterpret_cast<std::make_unsigned_t<T>*>(&v));
   }
 
   template <class T>
   void serialize_uvarint(T &v)
   {
-    typedef std::istreambuf_iterator<char> it;
-    tools::read_varint(it(stream_), it(), v); // XXX handle failure
+    using It = std::istreambuf_iterator<char>;
+    if (tools::read_varint(It{stream_}, It{}, v) < 0)
+      throw std::runtime_error{"deserialization of varint failed"};
   }
 
-  void begin_array(size_t &s)
+  // Reads array size into s and returns an RAII object to help delimit and end it.
+  [[nodiscard]] binary_archive_nested_array<binary_unarchiver> begin_array(size_t& s)
   {
     serialize_varint(s);
+    return {*this};
   }
 
-  void begin_array() { }
-  void delimit_array() { }
-  void end_array() { }
+  // Begins a sizeless array (this requires that the size is provided by some other means).
+  [[nodiscard]] binary_archive_nested_array<binary_unarchiver> begin_array()
+  {
+    return {*this};
+  }
 
-  void begin_string(const char *delimiter /*="\""*/) { }
-  void end_string(const char *delimiter   /*="\""*/) { }
+  // Does nothing. (This is used for tag annotations for archivers such as json)
+  void tag(std::string_view) { }
 
-  void read_variant_tag(variant_tag_type &t) {
+  [[nodiscard]] binary_archive_nested_object begin_object() { return {}; }
+
+  void read_variant_tag(binary_variant_tag_type &t) {
     serialize_int(t);
   }
 
-  size_t remaining_bytes() {
-    if (!stream_.good())
-      return 0;
-    //std::cerr << "tell: " << stream_.tellg() << std::endl;
+  /// Returns the number of remaining serialization bytes.  If the given `min_required` is non-zero
+  /// then we also ensure that at least that many bytes are available (and otherwise set the
+  /// stream's failbit to raise an exception).
+  size_t remaining_bytes(size_t min_required = 0) {
     assert(stream_.tellg() <= eof_pos_);
-    return eof_pos_ - stream_.tellg();
+    size_t remaining = eof_pos_ - stream_.tellg();
+    if (remaining < min_required)
+      stream_.setstate(std::istream::eofbit);
+    return remaining;
   }
+
+  // Returns the current position (i.e. stream.tellg()) of the input stream.
+  unsigned int streampos() { return static_cast<unsigned int>(stream_.tellg()); }
+
 protected:
+  // Protected constructor used by binary_string_unarchiver to avoid the seek (because the istream
+  // hasn't been set up yet when this gets called, and because we know the eof position in advance).
+  // You must call enable_stream_exceptions() in the derived constructor.
+  binary_unarchiver(std::istream& s, std::streamoff eof_pos) : stream_{s}, eof_pos_{eof_pos} {}
+
+  // Set up stream exceptions; called during construction.
+  void enable_stream_exceptions() {
+    exc_restore_ = stream_.exceptions();
+    stream_.exceptions(std::istream::badbit | std::istream::failbit | std::istream::eofbit);
+  }
+
+private:
+  std::istream& stream_;
+  std::ios_base::iostate exc_restore_;
   std::streamoff eof_pos_;
 };
 
-template <>
-struct binary_archive<true> : public binary_archive_base<std::ostream, true>
+/* \struct binary_archiver
+ *
+ * \brief the serializer class for a binary archive
+ */
+class binary_archiver : public serializer
 {
-  explicit binary_archive(stream_type &s) : base_type(s) { }
+public:
+  using variant_tag_type = binary_variant_tag_type;
 
-  template <class T>
+  explicit binary_archiver(std::ostream& s)
+    : stream_{s}
+  {
+    enable_stream_exceptions();
+  }
+
+  template <class T, std::enable_if_t<std::is_integral_v<T> && std::is_signed_v<T>, int> = 0>
   void serialize_int(T v)
   {
-    serialize_uint(static_cast<typename boost::make_unsigned<T>::type>(v));
-  }
-  template <class T>
-  void serialize_uint(T v)
-  {
-    for (size_t i = 0; i < sizeof(T); i++) {
-      stream_.put((char)(v & 0xff));
-      if (1 < sizeof(T)) v >>= 8;
-    }
+    serialize_int(static_cast<std::make_unsigned_t<T>>(v));
   }
 
-  void serialize_blob(void *buf, size_t len, const char *delimiter="")
+  template <class T, std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T>, int> = 0>
+  void serialize_int(T v)
   {
-    stream_.write((char *)buf, len);
+    if constexpr (sizeof(T) > 1)
+      boost::endian::native_to_little_inplace(v);
+    stream_.write(reinterpret_cast<const char*>(&v), sizeof(T));
   }
 
-  template <class T>
-  void serialize_varint(T &v)
+  void serialize_blob(const void* buf, size_t len, [[maybe_unused]] std::string_view delimiter=""sv)
   {
-    serialize_uvarint(*(typename boost::make_unsigned<T>::type *)(&v));
+    stream_.write(static_cast<const char*>(buf), len);
   }
 
-  template <class T>
-  void serialize_uvarint(T &v)
+  template <class T, std::enable_if_t<std::is_integral_v<T> && std::is_signed_v<T>, int> = 0>
+  void serialize_varint(T v)
   {
-    typedef std::ostreambuf_iterator<char> it;
-    tools::write_varint(it(stream_), v);
+    serialize_varint(static_cast<std::make_unsigned_t<T>>(v));
   }
-  void begin_array(size_t s)
+
+  template <class T, std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T>, int> = 0>
+  void serialize_varint(T v)
+  {
+    tools::write_varint(std::ostreambuf_iterator{stream_}, v);
+  }
+
+  // Begins an array and returns an RAII object that is used to delimit array elements.  For
+  // binary_archiver the size is written when the array begins, and the RAII is a no-op.
+  [[nodiscard]] binary_archive_nested_array<binary_archiver> begin_array(size_t& s)
   {
     serialize_varint(s);
+    return {*this};
   }
-  void begin_array() { }
-  void delimit_array() { }
-  void end_array() { }
 
-  void begin_string(const char *delimiter="\"") { }
-  void end_string(const char *delimiter="\"") { }
-
-  void write_variant_tag(variant_tag_type t) {
-    serialize_int(t);
+  // Begins a sizeless array.  (Typically requires that size be stored some other way).
+  [[nodiscard]] binary_archive_nested_array<binary_archiver> begin_array()
+  {
+    return {*this};
   }
+
+  // Does nothing. (This is used for tag annotations for archivers such as json)
+  void tag(std::string_view) { }
+
+  [[nodiscard]] binary_archive_nested_object begin_object() { return {}; }
+
+  void write_variant_tag(binary_variant_tag_type t) { serialize_int(t); }
+
+  // Returns the current position (i.e. stream.tellp()) of the output stream.
+  unsigned int streampos() { return static_cast<unsigned int>(stream_.tellp()); }
+
+protected:
+  // Protected constructor used by binary_string_archiver; this doesn't enable stream exceptions
+  // (because they need to be deferred until after the subclass is initialized).  The streamoff
+  // argument is ignored (but mirrors the binary_unarchiver protected constructor).  You must call
+  // enable_stream_exceptions() in the derived constructor.
+  binary_archiver(std::ostream& s, std::streamoff) : stream_{s} {}
+
+  // Set up stream exceptions; called during construction.
+  void enable_stream_exceptions() {
+    exc_restore_ = stream_.exceptions();
+    stream_.exceptions(std::istream::badbit | std::istream::failbit | std::istream::eofbit);
+  }
+
+private:
+  std::ostream& stream_;
+  std::ios_base::iostate exc_restore_;
 };
 
-POP_WARNINGS
+
+// True if Archive is a binary archiver or unarchiver
+template <typename Archive>
+constexpr bool is_binary = std::is_base_of_v<binary_archiver, Archive> || std::is_base_of_v<binary_unarchiver, Archive>;
+
+}

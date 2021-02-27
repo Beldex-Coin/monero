@@ -26,8 +26,11 @@
 // STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <string.h>
-#include "net/buffer.h"
+#include "epee/net/buffer.h"
+#include <cstring>
+#include <limits>
+#include <cstdint>
+#include <vector>
 
 #undef BELDEX_DEFAULT_LOG_CATEGORY
 #define BELDEX_DEFAULT_LOG_CATEGORY "net.buffer"
@@ -64,7 +67,8 @@ void buffer::append(const void *data, size_t sz)
       size_t reserve = (((size() + sz) * 3 / 2) + 4095) & ~4095;
       new_storage.reserve(reserve);
       new_storage.resize(size());
-      memcpy(new_storage.data(), storage.data() + offset, storage.size() - offset);
+      if (size() > 0)
+        memcpy(new_storage.data(), storage.data() + offset, storage.size() - offset);
       offset = 0;
       std::swap(storage, new_storage);
     }

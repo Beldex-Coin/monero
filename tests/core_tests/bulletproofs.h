@@ -38,8 +38,8 @@ struct gen_bp_tx_validation_base : public test_chain_unit_base
     : m_invalid_tx_index(0)
     , m_invalid_block_index(0)
   {
-    REGISTER_CALLBACK_METHOD(gen_bp_tx_validation_base, mark_invalid_tx);
-    REGISTER_CALLBACK_METHOD(gen_bp_tx_validation_base, mark_invalid_block);
+    REGISTER_CALLBACK(mark_invalid_tx);
+    REGISTER_CALLBACK(mark_invalid_block);
   }
 
   bool check_tx_verification_context(const cryptonote::tx_verification_context& tvc, bool tx_added, size_t event_idx, const cryptonote::transaction& /*tx*/)
@@ -50,7 +50,7 @@ struct gen_bp_tx_validation_base : public test_chain_unit_base
       return !tvc.m_verifivation_failed && tx_added;
   }
 
-  bool check_tx_verification_context(const std::vector<cryptonote::tx_verification_context>& tvcs, size_t tx_added, size_t event_idx, const std::vector<cryptonote::transaction>& /*txs*/)
+  bool check_tx_verification_context_array(const std::vector<cryptonote::tx_verification_context>& tvcs, size_t tx_added, size_t event_idx, const std::vector<cryptonote::transaction>& /*txs*/)
   {
     size_t failed = 0;
     for (const cryptonote::tx_verification_context &tvc: tvcs)
@@ -83,9 +83,9 @@ struct gen_bp_tx_validation_base : public test_chain_unit_base
   }
 
   bool generate_with(std::vector<test_event_entry>& events,
-      size_t n_txes, const uint64_t *amounts_paid, bool valid, const rct::RCTConfig *rct_config,
+      size_t n_txes, const uint64_t *amounts_paid, bool valid, const rct::RCTConfig *rct_config, uint8_t hf_version,
       const std::function<bool(std::vector<cryptonote::tx_source_entry> &sources, std::vector<cryptonote::tx_destination_entry> &destinations, size_t)> &pre_tx,
-      const std::function<bool(cryptonote::transaction &tx, size_t)> &post_tx) const;
+      const std::function<bool(cryptonote::transaction &tx, size_t)> &post_tx, size_t extra_blocks = 1) const;
 
   bool check_bp(const cryptonote::transaction &tx, size_t tx_idx, const size_t *sizes, const char *context) const;
 
@@ -94,106 +94,47 @@ private:
   size_t m_invalid_block_index;
 };
 
-template<>
-struct get_test_options<gen_bp_tx_validation_base> {
-  const std::vector<std::pair<uint8_t, uint64_t>> hard_forks = {
-    std::make_pair(7, 0),
-    std::make_pair(8, 1),
-    std::make_pair(11, gen_bp_tx_validation_base::NUM_UNLOCKED_BLOCKS + CRYPTONOTE_MINED_MONEY_UNLOCK_WINDOW + 1),
-  };
-
-  const cryptonote::test_options test_options = {
-    hard_forks
-  };
-};
-
-// valid
-struct gen_bp_tx_valid_1 : public gen_bp_tx_validation_base
+struct gen_bp_tx_valid_1_old : public gen_bp_tx_validation_base
 {
   bool generate(std::vector<test_event_entry>& events) const;
 };
-template<> struct get_test_options<gen_bp_tx_valid_1>: public get_test_options<gen_bp_tx_validation_base> {};
 
-struct gen_bp_tx_invalid_1_1 : public gen_bp_tx_validation_base
+struct gen_bp_tx_invalid_1_new : public gen_bp_tx_validation_base
 {
   bool generate(std::vector<test_event_entry>& events) const;
 };
-template<> struct get_test_options<gen_bp_tx_invalid_1_1>: public get_test_options<gen_bp_tx_validation_base> {};
 
 struct gen_bp_tx_valid_2 : public gen_bp_tx_validation_base
 {
   bool generate(std::vector<test_event_entry>& events) const;
 };
-template<> struct get_test_options<gen_bp_tx_valid_2>: public get_test_options<gen_bp_tx_validation_base> {};
 
 struct gen_bp_tx_valid_3 : public gen_bp_tx_validation_base
 {
   bool generate(std::vector<test_event_entry>& events) const;
 };
-template<> struct get_test_options<gen_bp_tx_valid_3>: public get_test_options<gen_bp_tx_validation_base> {};
 
 struct gen_bp_tx_valid_16 : public gen_bp_tx_validation_base
 {
   bool generate(std::vector<test_event_entry>& events) const;
 };
-template<> struct get_test_options<gen_bp_tx_valid_16>: public get_test_options<gen_bp_tx_validation_base> {};
-
-struct gen_bp_tx_invalid_4_2_1 : public gen_bp_tx_validation_base
-{
-  bool generate(std::vector<test_event_entry>& events) const;
-};
-template<> struct get_test_options<gen_bp_tx_invalid_4_2_1>: public get_test_options<gen_bp_tx_validation_base> {};
-
-struct gen_bp_tx_invalid_16_16 : public gen_bp_tx_validation_base
-{
-  bool generate(std::vector<test_event_entry>& events) const;
-};
-template<> struct get_test_options<gen_bp_tx_invalid_16_16>: public get_test_options<gen_bp_tx_validation_base> {};
 
 struct gen_bp_txs_valid_2_and_2 : public gen_bp_tx_validation_base
 {
   bool generate(std::vector<test_event_entry>& events) const;
 };
-template<> struct get_test_options<gen_bp_txs_valid_2_and_2>: public get_test_options<gen_bp_tx_validation_base> {};
-
-struct gen_bp_txs_invalid_2_and_8_2_and_16_16_1 : public gen_bp_tx_validation_base
-{
-  bool generate(std::vector<test_event_entry>& events) const;
-};
-template<> struct get_test_options<gen_bp_txs_invalid_2_and_8_2_and_16_16_1>: public get_test_options<gen_bp_tx_validation_base> {};
 
 struct gen_bp_txs_valid_2_and_3_and_2_and_4 : public gen_bp_tx_validation_base
 {
   bool generate(std::vector<test_event_entry>& events) const;
 };
-template<> struct get_test_options<gen_bp_txs_valid_2_and_3_and_2_and_4>: public get_test_options<gen_bp_tx_validation_base> {};
-
-struct gen_bp_tx_invalid_not_enough_proofs : public gen_bp_tx_validation_base
-{
-  bool generate(std::vector<test_event_entry>& events) const;
-};
-template<> struct get_test_options<gen_bp_tx_invalid_not_enough_proofs>: public get_test_options<gen_bp_tx_validation_base> {};
-
-struct gen_bp_tx_invalid_empty_proofs : public gen_bp_tx_validation_base
-{
-  bool generate(std::vector<test_event_entry>& events) const;
-};
-template<> struct get_test_options<gen_bp_tx_invalid_empty_proofs>: public get_test_options<gen_bp_tx_validation_base> {};
-
-struct gen_bp_tx_invalid_too_many_proofs : public gen_bp_tx_validation_base
-{
-  bool generate(std::vector<test_event_entry>& events) const;
-};
-template<> struct get_test_options<gen_bp_tx_invalid_too_many_proofs>: public get_test_options<gen_bp_tx_validation_base> {};
 
 struct gen_bp_tx_invalid_wrong_amount : public gen_bp_tx_validation_base
 {
   bool generate(std::vector<test_event_entry>& events) const;
 };
-template<> struct get_test_options<gen_bp_tx_invalid_wrong_amount>: public get_test_options<gen_bp_tx_validation_base> {};
 
-struct gen_bp_tx_invalid_borromean_type : public gen_bp_tx_validation_base
+struct gen_rct2_tx_clsag_malleability : public gen_bp_tx_validation_base
 {
   bool generate(std::vector<test_event_entry>& events) const;
 };
-template<> struct get_test_options<gen_bp_tx_invalid_borromean_type>: public get_test_options<gen_bp_tx_validation_base> {};

@@ -33,7 +33,7 @@
 #include "cryptonote_core/cryptonote_core.h"
 #include "cryptonote_core/blockchain.h"
 #include "p2p/p2p_protocol_defs.h"
-#include "net/connection_basic.hpp"
+#include "epee/net/connection_basic.hpp"
 #include "p2p/net_peerlist.h"
 #include "p2p/net_node.h"
 #include "cryptonote_protocol/cryptonote_protocol_handler.h"
@@ -73,7 +73,7 @@ int main(int argc, char* argv[])
   SL(boost::thread);
   SL(boost::asio::io_service);
   SL(boost::asio::io_service::work);
-  SL(boost::asio::deadline_timer);
+  SL(boost::asio::steady_timer);
 
   SL(cryptonote::DB_ERROR);
   SL(cryptonote::mdb_txn_safe);
@@ -102,21 +102,21 @@ int main(int argc, char* argv[])
   SL(nodetool::basic_node_data);
   SL(cryptonote::CORE_SYNC_DATA);
 
-  SL(tools::wallet2::transfer_details);
+  SL(wallet::transfer_details);
   SL(tools::wallet2::payment_details);
   SL(tools::wallet2::unconfirmed_transfer_details);
   SL(tools::wallet2::confirmed_transfer_details);
-  SL(tools::wallet2::tx_construction_data);
-  SL(tools::wallet2::pending_tx);
-  SL(tools::wallet2::unsigned_tx_set);
-  SL(tools::wallet2::signed_tx_set);
+  SL(wallet::tx_construction_data);
+  SL(wallet::pending_tx);
+  SL(wallet::unsigned_tx_set);
+  SL(wallet::signed_tx_set);
 
-  SL(Monero::WalletImpl);
-  SL(Monero::AddressBookRow);
-  SL(Monero::TransactionInfoImpl);
-  SL(Monero::TransactionHistoryImpl);
-  SL(Monero::PendingTransactionImpl);
-  SL(Monero::UnsignedTransactionImpl);
+  SL(Wallet::WalletImpl);
+  SL(Wallet::AddressBookRow);
+  SL(Wallet::TransactionInfoImpl);
+  SL(Wallet::TransactionHistoryImpl);
+  SL(Wallet::PendingTransactionImpl);
+  SL(Wallet::UnsignedTransactionImpl);
 
   return 0;
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2018, The Monero Project
+// Copyright (c) 2019, The Monero Project
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without modification, are
@@ -42,7 +42,7 @@ namespace
             switch (common_error(value))
             {
                 case common_error::kInvalidArgument:
-                    return make_error_code(std::errc::invalid_argument).message();
+                    return std::error_code{static_cast<int>(std::errc::invalid_argument), *this}.message();
                 case common_error::kInvalidErrorCode:
                     return "expect<T> was given an error value of zero";
                 default:
@@ -65,11 +65,12 @@ namespace
             return std::error_condition{value, *this};
         }
     };
+
+    const category instance{};
 }
 
 std::error_category const& common_category() noexcept
 {
-    static const category instance{};
     return instance;
 }
 

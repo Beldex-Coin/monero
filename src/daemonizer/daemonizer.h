@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -28,9 +28,9 @@
 
 #pragma once
 
-#include <boost/filesystem/path.hpp>
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/variables_map.hpp>
+#include "common/fs.h"
 
 namespace daemonizer
 {
@@ -39,28 +39,21 @@ namespace daemonizer
     , boost::program_options::options_description & normal_options
     );
 
-  boost::filesystem::path get_default_data_dir();
+  fs::path get_default_data_dir();
 
-  boost::filesystem::path get_relative_path_base(
+  fs::path get_relative_path_base(
       boost::program_options::variables_map const & vm
     );
 
-  /**
-   * @arg create_before_detach - this indicates that the daemon should be
-   * created before the fork, giving it a chance to report initialization
-   * errors.  At the time of this writing, this is not possible in the primary
-   * daemon (likely due to the size of the blockchain in memory).
-   */
-  template <typename T_executor>
+  template <typename Application, typename... Args>
   bool daemonize(
-      int argc, char const * argv[]
-    , T_executor && executor // universal ref
-    , boost::program_options::variables_map const & vm
-    );
+      const char* name, int argc, char const* argv[],
+      boost::program_options::variables_map vm,
+      Args&&... args);
 }
 
 #ifdef WIN32
-#  include "daemonizer/windows_daemonizer.inl"
+  #include "daemonizer/windows_daemonizer.inl"
 #else
-#  include "daemonizer/posix_daemonizer.inl"
+  #include "daemonizer/posix_daemonizer.inl"
 #endif

@@ -27,10 +27,8 @@
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // 
 // Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
-#include <boost/filesystem.hpp>
 #include "gtest/gtest.h"
 
-#include "include_base_utils.h"
 #include "wallet/wallet2.h"
 #include "crypto/crypto.h"
 #include "cryptonote_basic/account.h"

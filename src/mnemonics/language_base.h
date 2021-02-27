@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -38,9 +38,8 @@
 #include <vector>
 #include <unordered_map>
 #include <string>
-#include <boost/algorithm/string.hpp>
-#include "misc_log_ex.h"
-#include "fnv1.h"
+#include "epee/misc_log_ex.h"
+#include "epee/fnv1.h"
 
 /*!
  * \namespace Language

@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -40,10 +40,11 @@
 #include <cstdint>
 #include <vector>
 #include <unordered_map>
-#include "wipeable_string.h"
-#include "misc_language.h"
-#include "int-util.h"
+#include "epee/wipeable_string.h"
+#include "epee/misc_language.h"
+#include "epee/int-util.h"
 #include "mnemonics/electrum-words.h"
+#include "common/beldex.h"
 #include <boost/crc.hpp>
 
 #include "chinese_simplified.h"
@@ -292,7 +293,7 @@ namespace crypto
       }
 
       std::vector<uint32_t> matched_indices;
-      auto wiper = epee::misc_utils::create_scope_leave_handler([&](){memwipe(matched_indices.data(), matched_indices.size() * sizeof(matched_indices[0]));});
+      BELDEX_DEFER { memwipe(matched_indices.data(), matched_indices.size() * sizeof(matched_indices[0])); };
       Language::Base *language;
       if (!find_seed_language(seed, has_checksum, matched_indices, &language))
       {
@@ -340,9 +341,7 @@ namespace crypto
         const size_t expected = len * 3 / 32;
         if (seed.size() == expected/2)
         {
-          dst += ' ';                    // if electrum 12-word seed, duplicate
-          dst += dst;                    // if electrum 12-word seed, duplicate
-          dst.pop_back();                // trailing space
+          dst.append(dst.data(), dst.size()); // if electrum 12-word seed, duplicate
         }
       }
 

@@ -30,8 +30,8 @@
 
 #include "chaingen.h"
 #include "v2_tests.h"
+#include "common/util.h"
 
-using namespace epee;
 using namespace crypto;
 using namespace cryptonote;
 
@@ -53,7 +53,7 @@ bool gen_v2_tx_validation_base::generate_with(std::vector<test_event_entry>& eve
     miner_accounts[n].generate();
     CHECK_AND_ASSERT_MES(generator.construct_block_manually(blocks[n], *prev_block, miner_accounts[n],
         test_generator::bf_major_ver | test_generator::bf_minor_ver | test_generator::bf_timestamp,
-        2, 2, prev_block->timestamp + DIFFICULTY_BLOCKS_ESTIMATE_TIMESPAN * 2, // v2 has blocks twice as long
+        2, 2, prev_block->timestamp + tools::to_seconds(TARGET_BLOCK_TIME) * 2, // v2 has blocks twice as long
           crypto::hash(), 0, transaction(), std::vector<crypto::hash>(), 0),
         false, "Failed to generate block");
     events.push_back(blocks[n]);
@@ -69,7 +69,7 @@ bool gen_v2_tx_validation_base::generate_with(std::vector<test_event_entry>& eve
       cryptonote::block blk;
       CHECK_AND_ASSERT_MES(generator.construct_block_manually(blk, blk_last, miner_account,
           test_generator::bf_major_ver | test_generator::bf_minor_ver | test_generator::bf_timestamp,
-          2, 2, blk_last.timestamp + DIFFICULTY_BLOCKS_ESTIMATE_TIMESPAN * 2, // v2 has blocks twice as long
+          2, 2, blk_last.timestamp + tools::to_seconds(TARGET_BLOCK_TIME) * 2, // v2 has blocks twice as long
           crypto::hash(), 0, transaction(), std::vector<crypto::hash>(), 0),
           false, "Failed to generate block");
       events.push_back(blk);
@@ -85,14 +85,8 @@ bool gen_v2_tx_validation_base::generate_with(std::vector<test_event_entry>& eve
     tx_source_entry& src = sources.back();
 
     src.amount = blocks[0].miner_tx.vout[out_idx[out_idx_idx]].amount;
-  std::cout << "using " << print_money(src.amount) << " output at index " << out_idx[out_idx_idx] << std::endl;
     for (int m = 0; m <= mixin; ++m) {
-      int idx;
-      if (is_valid_decomposed_amount(src.amount))
-        idx = m+1; // one out of that size per miner tx, including genesis
-      else
-        idx = 0; // dusty, no other output of that size
-      src.push_output(idx, boost::get<txout_to_key>(blocks[m].miner_tx.vout[out_idx[out_idx_idx]].target).key, src.amount);
+      src.push_output(0, var::get<txout_to_key>(blocks[m].miner_tx.vout[out_idx[out_idx_idx]].target).key, src.amount);
     }
     src.real_out_tx_key = cryptonote::get_tx_pub_key_from_extra(blocks[0].miner_tx);
     src.real_output = 0;
@@ -108,7 +102,7 @@ bool gen_v2_tx_validation_base::generate_with(std::vector<test_event_entry>& eve
   destinations.push_back(td);
 
   transaction tx;
-  bool r = construct_tx(miner_accounts[0].get_keys(), sources, destinations, boost::none, std::vector<uint8_t>(), tx, 0);
+  bool r = construct_tx(miner_accounts[0].get_keys(), sources, destinations, std::nullopt, std::vector<uint8_t>(), tx, 0);
   CHECK_AND_ASSERT_MES(r, false, "failed to construct transaction");
   if (!valid)
     DO_CALLBACK(events, "mark_invalid_tx");

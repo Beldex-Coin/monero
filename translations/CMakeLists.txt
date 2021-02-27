@@ -1,4 +1,4 @@
-# Copyright (c) 2017-2018, The Monero Project
+# Copyright (c) 2020, The Beldex Project
 #
 # All rights reserved.
 #
@@ -26,58 +26,37 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-cmake_minimum_required(VERSION 2.8.7)
-
-project(translations)
-
-# when crosscompiling import the executable targets from a file
-IF(CMAKE_CROSSCOMPILING)
-  message(WARNING "CrossCompiling")
-  SET(IMPORT_EXECUTABLES "${CMAKE_CURRENT_BINARY_DIR}/ImportExecutables.cmake" CACHE FILEPATH "Point it to the export file from a native build")
-  INCLUDE(${IMPORT_EXECUTABLES})
-ENDIF(CMAKE_CROSSCOMPILING)
-
-# only build the generator if not crosscompiling
-IF(NOT CMAKE_CROSSCOMPILING)
-  add_executable(generate_translations_header generate_translations_header.c)
-ENDIF(NOT CMAKE_CROSSCOMPILING)
-
-if(LRELEASE_PATH STREQUAL "")
-  find_program(LRELEASE lrelease)
+if (ANDROID)
+  # Override the stuff (locally, inside this subdir) because we want to find the host system Qt5 to
+  # build the translation files.
+  set(CMAKE_FIND_ROOT_PATH "")
+  # This might be wrong, but cmake gives us no easy way to find this, so for now we only support
+  # doing the android builds with translations on amd64 linux
+  set(CMAKE_LIBRARY_ARCHITECTURE "x86_64-linux-gnu")
+  set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE NEVER)
+  set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY NEVER)
+  set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE NEVER)
+  set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+  set(ANDROID_PLATFORM FALSE)
+endif()
+find_package(Qt5 QUIET COMPONENTS Core LinguistTools)
+if(NOT Qt5_FOUND OR NOT Qt5LinguistTools_FOUND)
+  set(qm_files "")
+  message(WARNING "Qt5 LingustTools not found, translation files not built")
 else()
-  set(LRELEASE ${LRELEASE_PATH}/lrelease)
+  file(GLOB ts_files RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" *.ts)
+  qt5_add_translation(qm_files ${ts_files})
 endif()
 
-if(LRELEASE STREQUAL "LRELEASE-NOTFOUND")
-  set(ts_files "")
-  message(WARNING "lrelease program not found, translation files not built")
-else()
-  execute_process(COMMAND ${LRELEASE} -version
-    RESULT_VARIABLE lrelease_ret)
-  if(NOT lrelease_ret EQUAL "0")
-    set(ts_files "")
-    message(WARNING "lrelease program not working, translation files not built")
-  else()
-    file(GLOB ts_files RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" *.ts)
-    foreach(ts_file ${ts_files})
-      string(REPLACE ".ts" ".qm" qm_file "${ts_file}")
-      add_custom_command(TARGET generate_translations_header
-        PRE_BUILD
-        COMMAND ${LRELEASE} "${CMAKE_CURRENT_SOURCE_DIR}/${ts_file}" -qm "${qm_file}"
-        WORKING_DIRECTORY "${CMAKE_CURRENT_BIN_DIR}")
-    endforeach()
-  endif()
-endif()
-
-string(REPLACE ".ts" ".qm" qm_files "${ts_files}")
-
-add_custom_command(TARGET generate_translations_header
-  POST_BUILD
-  COMMAND ./generate_translations_header ${qm_files}
-  WORKING_DIRECTORY "${CMAKE_CURRENT_BIN_DIR}"
-  COMMENT "Generating embedded translations header")
-
-# export the generator target to a file, so it can be imported (see above) by another build
-IF(NOT CMAKE_CROSSCOMPILING)
-  EXPORT(TARGETS generate_translations_header FILE ${CMAKE_CURRENT_BINARY_DIR}/ImportExecutables.cmake )
-ENDIF(NOT CMAKE_CROSSCOMPILING)
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/translation_files.cpp
+    COMMAND ${CMAKE_COMMAND}
+        -D "qm_files=${qm_files}"
+        -D "base_dir=${CMAKE_CURRENT_BINARY_DIR}"
+        -D "in_file=${CMAKE_CURRENT_SOURCE_DIR}/translation_files.cpp.in"
+        -D "out_file=${CMAKE_CURRENT_BINARY_DIR}/translation_files.cpp"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/generate_translation_data.cmake
+    DEPENDS ${qm_files} ${CMAKE_CURRENT_SOURCE_DIR}/generate_translation_data.cmake
+    VERBATIM
+)
+add_custom_target(generate_translation_data DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/translation_files.cpp)

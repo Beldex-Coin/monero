@@ -29,7 +29,7 @@
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <boost/lexical_cast.hpp>
-#include "misc_log_ex.h"
+#include "epee/misc_log_ex.h"
 #include "cryptonote_basic/cryptonote_format_utils.h"
 #include "rctOps.h"
 using namespace crypto;
@@ -251,7 +251,7 @@ namespace rct {
 
     //generates a random scalar which can be used as a secret key or mask
     void skGen(key &sk) {
-        random32_unbiased(sk.bytes);
+        random_scalar(sk.bytes);
     }
 
     //generates a random scalar which can be used as a secret key or mask
@@ -408,10 +408,22 @@ namespace rct {
         return res;
     }
 
-    //Computes aL where L is the curve order
-    bool isInMainSubgroup(const key & a) {
+    //Computes 8P without byte conversion
+    void scalarmult8(ge_p3 &res, const key &P)
+    {
         ge_p3 p3;
-        return toPointCheckOrder(&p3, a.bytes);
+        CHECK_AND_ASSERT_THROW_MES_L1(ge_frombytes_vartime(&p3, P.bytes) == 0, "ge_frombytes_vartime failed at "+boost::lexical_cast<std::string>(__LINE__));
+        ge_p2 p2;
+        ge_p3_to_p2(&p2, &p3);
+        ge_p1p1 p1;
+        ge_mul8(&p1, &p2);
+        ge_p1p1_to_p3(&res, &p1);
+    }
+
+    //Computes lA where l is the curve order
+    bool isInMainSubgroup(const key & A) {
+        ge_p3 p3;
+        return toPointCheckOrder(&p3, A.bytes);
     }
 
     //Curve addition / subtractions
@@ -499,6 +511,23 @@ namespace rct {
         ge_tobytes(aAbB.bytes, &rv);
     }
 
+    // addKeys_aGbBcC
+    // computes aG + bB + cC
+    // G is the fixed basepoint and B,C require precomputation
+    void addKeys_aGbBcC(key &aGbBcC, const key &a, const key &b, const ge_dsmp B, const key &c, const ge_dsmp C) {
+        ge_p2 rv;
+        ge_triple_scalarmult_base_vartime(&rv, a.bytes, b.bytes, B, c.bytes, C);
+        ge_tobytes(aGbBcC.bytes, &rv);
+    }
+
+    // addKeys_aAbBcC
+    // computes aA + bB + cC
+    // A,B,C require precomputation
+    void addKeys_aAbBcC(key &aAbBcC, const key &a, const ge_dsmp A, const key &b, const ge_dsmp B, const key &c, const ge_dsmp C) {
+        ge_p2 rv;
+        ge_triple_scalarmult_precomp_vartime(&rv, a.bytes, A, b.bytes, B, c.bytes, C);
+        ge_tobytes(aAbBcC.bytes, &rv);
+    }
 
     //subtract Keys (subtracts curve points)
     //AB = A - B where A, B are curve points
@@ -620,44 +649,16 @@ namespace rct {
        sc_reduce32(rv.bytes);
        return rv;
    }
-
-    key hashToPointSimple(const key & hh) {
-        key pointk;
-        ge_p1p1 point2;
-        ge_p2 point;
-        ge_p3 res;
-        key h = cn_fast_hash(hh); 
-        CHECK_AND_ASSERT_THROW_MES_L1(ge_frombytes_vartime(&res, h.bytes) == 0, "ge_frombytes_vartime failed at "+boost::lexical_cast<std::string>(__LINE__));
-        ge_p3_to_p2(&point, &res);
-        ge_mul8(&point2, &point);
-        ge_p1p1_to_p3(&res, &point2);
-        ge_p3_tobytes(pointk.bytes, &res);
-        return pointk;
-    }    
     
-    key hashToPoint(const key & hh) {
-        key pointk;
-        ge_p2 point;
-        ge_p1p1 point2;
-        ge_p3 res;
-        key h = cn_fast_hash(hh); 
-        ge_fromfe_frombytes_vartime(&point, h.bytes);
-        ge_mul8(&point2, &point);
-        ge_p1p1_to_p3(&res, &point2);        
-        ge_p3_tobytes(pointk.bytes, &res);
-        return pointk;
+    // Hash a key to p3 representation
+    void hash_to_p3(ge_p3 &hash8_p3, const key &k) {
+      key hash_key = cn_fast_hash(k);
+      ge_p2 hash_p2;
+      ge_fromfe_frombytes_vartime(&hash_p2, hash_key.bytes);
+      ge_p1p1 hash8_p1p1;
+      ge_mul8(&hash8_p1p1, &hash_p2);
+      ge_p1p1_to_p3(&hash8_p3, &hash8_p1p1);
     }
-
-    void hashToPoint(key & pointk, const key & hh) {
-        ge_p2 point;
-        ge_p1p1 point2;
-        ge_p3 res;
-        key h = cn_fast_hash(hh); 
-        ge_fromfe_frombytes_vartime(&point, h.bytes);
-        ge_mul8(&point2, &point);
-        ge_p1p1_to_p3(&res, &point2);        
-        ge_p3_tobytes(pointk.bytes, &res);
-    }    
 
     //sums a vector of curve points (for scalars use sc_add)
     void sumKeys(key & Csum, const keyV &  Cis) {

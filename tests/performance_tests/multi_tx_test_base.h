@@ -55,10 +55,10 @@ public:
     {
       m_miners[i].generate();
 
-      if (!construct_miner_tx(0, 0, 0, 2, 0, m_miners[i].get_keys().m_account_address, m_miner_txs[i]))
+      if (!construct_miner_tx(0, 0, 0, 2, 0, m_miner_txs[1], cryptonote::beldex_miner_tx_context::miner_block(cryptonote::FAKECHAIN, m_miners[i].get_keys().m_account_address)))
         return false;
 
-      txout_to_key tx_out = boost::get<txout_to_key>(m_miner_txs[i].vout[0].target);
+      txout_to_key tx_out = var::get<txout_to_key>(m_miner_txs[i].vout[0].target);
       output_entries.push_back(std::make_pair(i, rct::ctkey({rct::pk2rct(tx_out.key), rct::zeroCommit(m_miner_txs[i].vout[0].amount)})));
       m_public_keys[i] = tx_out.key;
       m_public_key_ptrs[i] = &m_public_keys[i];
@@ -87,5 +87,5 @@ protected:
 
   std::vector<cryptonote::tx_source_entry> m_sources;
   crypto::public_key m_public_keys[ring_size];
-  const crypto::public_key* m_public_key_ptrs[ring_size];
+  std::vector<const crypto::public_key*> m_public_key_ptrs{ring_size};
 };

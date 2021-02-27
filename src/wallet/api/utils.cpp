@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 //
 // All rights reserved.
 //
@@ -28,16 +28,14 @@
 //
 // Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
-
-
-#include "include_base_utils.h"                     // LOG_PRINT_x
+#include "common_defines.h"
+#include "epee/misc_log_ex.h"
 #include "common/util.h"
 
-using namespace std;
-
-namespace Monero {
+namespace Wallet {
 namespace Utils {
 
+EXPORT
 bool isAddressLocal(const std::string &address)
 { 
     try {
@@ -48,6 +46,7 @@ bool isAddressLocal(const std::string &address)
     }
 }
 
+EXPORT
 void onStartup()
 {
     tools::on_startup();
@@ -58,7 +57,4 @@ void onStartup()
 
 }
 
-
 } // namespace
-
-namespace Bitmonero = Monero;

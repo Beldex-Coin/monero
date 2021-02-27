@@ -27,119 +27,67 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-set(rpc_base_sources
-  rpc_args.cpp)
+add_library(rpc_commands
+  core_rpc_server_commands_defs.cpp
+  )
 
-set(rpc_sources
+add_library(rpc_server_base
+  rpc_args.cpp
+  http_server_base.cpp
+  )
+
+add_library(rpc
+  bootstrap_daemon.cpp
   core_rpc_server.cpp
-  rpc_handler.cpp
-  instanciations)
+  )
 
-set(daemon_messages_sources
-  message.cpp
-  daemon_messages.cpp)
+add_library(daemon_rpc_server
+  http_server.cpp
+  lmq_server.cpp
+  )
 
-set(daemon_rpc_server_sources
-  daemon_handler.cpp
-  zmq_server.cpp)
-
-
-set(rpc_base_headers
-  rpc_args.h)
-
-set(rpc_headers
-  rpc_handler.cpp)
-
-set(daemon_rpc_server_headers)
-
-
-set(rpc_daemon_private_headers
-  core_rpc_server.h
-  core_rpc_server_commands_defs.h
-  core_rpc_server_error_codes.h)
-
-set(daemon_messages_private_headers
-  message.h
-  daemon_messages.h)
-
-set(daemon_rpc_server_private_headers
-  message.h
-  daemon_messages.h
-  daemon_handler.h
-  zmq_server.h)
-
-
-beldex_private_headers(rpc
-  ${rpc_private_headers})
-
-beldex_private_headers(daemon_rpc_server
-  ${daemon_rpc_server_private_headers})
-
-
-beldex_add_library(rpc_base
-  ${rpc_base_sources}
-  ${rpc_base_headers}
-  ${rpc_base_private_headers})
-
-beldex_add_library(rpc
-  ${rpc_sources}
-  ${rpc_headers}
-  ${rpc_private_headers})
-
-beldex_add_library(daemon_messages
-  ${daemon_messages_sources}
-  ${daemon_messages_headers}
-  ${daemon_messages_private_headers})
-
-beldex_add_library(daemon_rpc_server
-  ${daemon_rpc_server_sources}
-  ${daemon_rpc_server_headers}
-  ${daemon_rpc_server_private_headers})
-
-
-target_link_libraries(rpc_base
+add_library(rpc_http_client
+    http_client.cpp
+    )
+target_link_libraries(rpc_commands
   PUBLIC
     common
-    epee
-    ${Boost_REGEX_LIBRARY}
-    ${Boost_THREAD_LIBRARY}
-    ${Boost_PROGRAM_OPTIONS_LIBRARY}
+    cpr::cpr
   PRIVATE
-    ${EXTRA_LIBRARIES})
+    cryptonote_protocol
+    extra)
+
+target_link_libraries(rpc_server_base
+  PUBLIC
+    common
+    uWebSockets
+  PRIVATE
+    extra)
 
 target_link_libraries(rpc
   PUBLIC
-    rpc_base
-    common
     cryptonote_core
-    cryptonote_protocol
+    rpc_commands
+    rpc_server_base
+    net
     version
-    ${Boost_REGEX_LIBRARY}
-    ${Boost_THREAD_LIBRARY}
   PRIVATE
-    ${EXTRA_LIBRARIES})
-
-target_link_libraries(daemon_messages
-  LINK_PRIVATE
-    cryptonote_core
     cryptonote_protocol
-    version
-    serialization
-    ${EXTRA_LIBRARIES})
+    Boost::thread
+    Boost::program_options
+    OpenSSL::SSL
+    extra)
 
 target_link_libraries(daemon_rpc_server
-  LINK_PRIVATE
+  PRIVATE
+    rpc_server_base
     rpc
-    cryptonote_core
-    cryptonote_protocol
-    version
-    daemon_messages
-    serialization
-    ${Boost_CHRONO_LIBRARY}
-    ${Boost_REGEX_LIBRARY}
-    ${Boost_SYSTEM_LIBRARY}
-    ${Boost_THREAD_LIBRARY}
-    ${ZMQ_LIB}
-    ${EXTRA_LIBRARIES})
-target_include_directories(daemon_rpc_server PUBLIC ${ZMQ_INCLUDE_PATH})
-target_include_directories(obj_daemon_rpc_server PUBLIC ${ZMQ_INCLUDE_PATH})
+    Boost::thread
+    extra)
+
+target_link_libraries(rpc_http_client
+  PUBLIC
+    common
+    cpr::cpr
+  PRIVATE
+    extra)

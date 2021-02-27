@@ -32,42 +32,7 @@
 set(folder "tests")
 set(TEST_DATA_DIR "${CMAKE_CURRENT_LIST_DIR}/data")
 
-if (WIN32 AND STATIC)
-  add_definitions(-DSTATICLIB)
-  # miniupnp changed their static define
-  add_definitions(-DMINIUPNP_STATICLIB)
-endif ()
-
-find_package(GTest)
-
-if (GTest_FOUND)
-  include_directories(SYSTEM ${GTEST_INCLUDE_DIRS})
-else ()
-  message(STATUS "GTest not found on the system: will use GTest bundled with this source")
-
-  include(ExternalProject)
-  ExternalProject_Add(googletest
-    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/gtest
-    BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/gtest
-    DOWNLOAD_COMMAND ""
-    UPDATE_COMMAND ""
-    INSTALL_COMMAND ""
-  )
-  add_library(gtest      UNKNOWN IMPORTED)
-  add_library(gtest_main UNKNOWN IMPORTED)
-  set_target_properties(gtest PROPERTIES
-    IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/gtest/${CMAKE_STATIC_LIBRARY_PREFIX}gtest${CMAKE_STATIC_LIBRARY_SUFFIX}"
-  )
-  set_target_properties(gtest_main PROPERTIES
-    IMPORTED_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/gtest/${CMAKE_STATIC_LIBRARY_PREFIX}gtest_main${CMAKE_STATIC_LIBRARY_SUFFIX}"
-  )
-  add_dependencies(gtest      googletest)
-  add_dependencies(gtest_main googletest)
-
-  # Emulate the FindGTest module's variable.
-  set(GTEST_LIBRARIES gtest gtest_main)
-  include_directories(SYSTEM "${CMAKE_CURRENT_SOURCE_DIR}/gtest/include")
-endif (GTest_FOUND)
+add_subdirectory(../external/googletest gtest EXCLUDE_FROM_ALL)
 
 file(COPY
   data/wallet_testnet.keys
@@ -77,10 +42,19 @@ file(COPY
   data/signed_beldex_tx
   DESTINATION data)
 
+if(NOT CMAKE_VERSION VERSION_LESS 3.12)
+  find_package(Python COMPONENTS Interpreter)
+else()
+  set(Python_ADDITIONAL_VERSIONS 3)
+  find_package(PythonInterp)
+  set(Python_EXECUTABLE ${PYTHON_EXECUTABLE})
+endif()
+
 add_subdirectory(core_tests)
 add_subdirectory(fuzz)
 add_subdirectory(crypto)
-add_subdirectory(functional_tests)
+# Still expects to find monero daemon/wallet; disable for now.
+#add_subdirectory(functional_tests)
 add_subdirectory(performance_tests)
 add_subdirectory(core_proxy)
 add_subdirectory(unit_tests)
@@ -88,20 +62,20 @@ add_subdirectory(difficulty)
 add_subdirectory(block_weight)
 add_subdirectory(hash)
 add_subdirectory(net_load_tests)
-if (BUILD_GUI_DEPS)
-  add_subdirectory(libwallet_api_tests)
+add_subdirectory(network_tests)
+if (ANDROID)
+# Currently failed to compile
+#  add_subdirectory(libwallet_api_tests)
+endif()
+
+if (TREZOR_DEBUG)
+  add_subdirectory(trezor)
 endif()
 
 # add_subdirectory(daemon_tests)
 
-set(hash_targets_sources
-  hash-target.cpp)
-
-set(hash_targets_headers)
-
 add_executable(hash-target-tests
-  ${hash_targets_sources}
-  ${hash_targets_headers})
+  hash-target.cpp)
 target_link_libraries(hash-target-tests
   PRIVATE
     cryptonote_core)
@@ -123,5 +97,5 @@ set(enabled_tests
     fuzz
     unit_tests)
 
-add_custom_target(tests DEPENDS enabled_tests)
+add_custom_target(tests DEPENDS ${enabled_tests})
 set_property(TARGET tests PROPERTY FOLDER "${folder}")

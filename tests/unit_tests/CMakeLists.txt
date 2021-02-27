@@ -26,36 +26,34 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-set(unit_tests_sources
+add_executable(unit_tests
   account.cpp
   apply_permutation.cpp
   address_from_url.cpp
-  ban.cpp
   base58.cpp
   blockchain_db.cpp
   block_queue.cpp
   block_reward.cpp
   bulletproofs.cpp
-  canonical_amounts.cpp
   chacha.cpp
   checkpoints.cpp
   command_line.cpp
   crypto.cpp
-  decompose_amount_into_digits.cpp
   device.cpp
   dns_resolver.cpp
   epee_boosted_tcp_server.cpp
   epee_levin_protocol_handler_async.cpp
   epee_utils.cpp
   expect.cpp
-  fee.cpp
-  json_serialization.cpp
   get_xtype_from_string.cpp
   hashchain.cpp
-  http.cpp
+  hmac_keccak.cpp
   keccak.cpp
+  levin.cpp
   logging.cpp
+  beldex_name_system.cpp
   long_term_block_weight.cpp
+  lmdb.cpp
   main.cpp
   memwipe.cpp
   mlocker.cpp
@@ -63,15 +61,19 @@ set(unit_tests_sources
   mul_div.cpp
   multiexp.cpp
   multisig.cpp
+  net.cpp
+  node_server.cpp
   notify.cpp
   output_distribution.cpp
   parse_amount.cpp
   pruning.cpp
   random.cpp
+  rolling_median.cpp
   serialization.cpp
   master_nodes.cpp
+  master_nodes_swarm.cpp
   sha256.cpp
-  slow_memmem.cpp
+  string_util.cpp
   subaddress.cpp
   test_tx_utils.cpp
   test_peerlist.cpp
@@ -86,31 +88,24 @@ set(unit_tests_sources
   vercmp.cpp
   ringdb.cpp
   wipeable_string.cpp
-  is_hdd.cpp
   aligned.cpp)
 
-set(unit_tests_headers
-  unit_tests_utils.h)
-
-add_executable(unit_tests
-  ${unit_tests_sources}
-  ${unit_tests_headers})
 target_link_libraries(unit_tests
   PRIVATE
     ringct
     cryptonote_protocol
     cryptonote_core
     blockchain_db
+    lmdb_lib
     rpc
-    serialization
+    net
     wallet
     p2p
     version
-    ${Boost_CHRONO_LIBRARY}
-    ${Boost_THREAD_LIBRARY}
-    ${GTEST_LIBRARIES}
-    ${CMAKE_THREAD_LIBS_INIT}
-    ${EXTRA_LIBRARIES})
+    Boost::thread
+    miniupnpc
+    gtest
+    extra)
 set_property(TARGET unit_tests
   PROPERTY
     FOLDER "tests")
@@ -131,5 +126,5 @@ add_test(
   COMMAND unit_tests --data-dir "${TEST_DATA_DIR}")
 
 add_executable(test_notifier test_notifier.cpp)
-target_link_libraries(test_notifier ${EXTRA_LIBRARIES})
+target_link_libraries(test_notifier extra)
 set_property(TARGET test_notifier PROPERTY FOLDER "tests")

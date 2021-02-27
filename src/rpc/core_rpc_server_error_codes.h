@@ -1,4 +1,5 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2018-2020, The Beldex Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -28,20 +29,23 @@
 // 
 // Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
-#pragma  once 
+#pragma once
+#include <cstdint>
 
+namespace cryptonote { namespace rpc {
 
-#define CORE_RPC_ERROR_CODE_WRONG_PARAM           -1
-#define CORE_RPC_ERROR_CODE_TOO_BIG_HEIGHT        -2
-#define CORE_RPC_ERROR_CODE_TOO_BIG_RESERVE_SIZE  -3
-#define CORE_RPC_ERROR_CODE_WRONG_WALLET_ADDRESS  -4
-#define CORE_RPC_ERROR_CODE_INTERNAL_ERROR        -5
-#define CORE_RPC_ERROR_CODE_WRONG_BLOCKBLOB       -6
-#define CORE_RPC_ERROR_CODE_BLOCK_NOT_ACCEPTED    -7
-#define CORE_RPC_ERROR_CODE_CORE_BUSY             -9
-#define CORE_RPC_ERROR_CODE_WRONG_BLOCKBLOB_SIZE  -10
-#define CORE_RPC_ERROR_CODE_UNSUPPORTED_RPC       -11
-#define CORE_RPC_ERROR_CODE_MINING_TO_SUBADDRESS  -12
-#define CORE_RPC_ERROR_CODE_REGTEST_REQUIRED      -13
+constexpr int16_t
+    ERROR_WRONG_PARAM           = -1,
+    ERROR_TOO_BIG_HEIGHT        = -2,
+    ERROR_TOO_BIG_RESERVE_SIZE  = -3,
+    ERROR_WRONG_WALLET_ADDRESS  = -4,
+    ERROR_INTERNAL              = -5,
+    ERROR_WRONG_BLOCKBLOB       = -6,
+    ERROR_BLOCK_NOT_ACCEPTED    = -7,
+    ERROR_CORE_BUSY             = -9,
+    ERROR_WRONG_BLOCKBLOB_SIZE  = -10,
+    ERROR_UNSUPPORTED_RPC       = -11,
+    ERROR_MINING_TO_SUBADDRESS  = -12,
+    ERROR_REGTEST_REQUIRED      = -13;
 
-
+}}

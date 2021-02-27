@@ -31,30 +31,27 @@
 #include "chaingen.h"
 #include "chain_split_1.h"
 
-using namespace std;
-
-using namespace epee;
 using namespace cryptonote;
 
 
 gen_simple_chain_split_1::gen_simple_chain_split_1()
 {
-  REGISTER_CALLBACK("check_split_not_switched", gen_simple_chain_split_1::check_split_not_switched);
-  REGISTER_CALLBACK("check_split_not_switched2", gen_simple_chain_split_1::check_split_not_switched2);
-  REGISTER_CALLBACK("check_split_switched", gen_simple_chain_split_1::check_split_switched);
-  REGISTER_CALLBACK("check_split_not_switched_back", gen_simple_chain_split_1::check_split_not_switched_back);
-  REGISTER_CALLBACK("check_split_switched_back_1", gen_simple_chain_split_1::check_split_switched_back_1);
-  REGISTER_CALLBACK("check_split_switched_back_2", gen_simple_chain_split_1::check_split_switched_back_2);
-  REGISTER_CALLBACK("check_mempool_1", gen_simple_chain_split_1::check_mempool_1);
-  REGISTER_CALLBACK("check_mempool_2", gen_simple_chain_split_1::check_mempool_2);
-  //REGISTER_CALLBACK("check_orphaned_chain_1", gen_simple_chain_split_1::check_orphaned_chain_1);
-  //REGISTER_CALLBACK("check_orphaned_switched_to_alternative", gen_simple_chain_split_1::check_orphaned_switched_to_alternative);
-  //REGISTER_CALLBACK("check_orphaned_chain_2", gen_simple_chain_split_1::check_orphaned_chain_2);
-  //REGISTER_CALLBACK("check_orphaned_switched_to_main", gen_simple_chain_split_1::check_orphaned_switched_to_main);
-  //REGISTER_CALLBACK("check_orphaned_chain_38", gen_simple_chain_split_1::check_orphaned_chain_38);
-  //REGISTER_CALLBACK("check_orphaned_chain_39", gen_simple_chain_split_1::check_orphaned_chain_39);
-  //REGISTER_CALLBACK("check_orphaned_chain_40", gen_simple_chain_split_1::check_orphaned_chain_40);
-  //REGISTER_CALLBACK("check_orphaned_chain_41", gen_simple_chain_split_1::check_orphaned_chain_41);
+  REGISTER_CALLBACK(check_split_not_switched);
+  REGISTER_CALLBACK(check_split_not_switched2);
+  REGISTER_CALLBACK(check_split_switched);
+  REGISTER_CALLBACK(check_split_not_switched_back);
+  REGISTER_CALLBACK(check_split_switched_back_1);
+  REGISTER_CALLBACK(check_split_switched_back_2);
+  REGISTER_CALLBACK(check_mempool_1);
+  REGISTER_CALLBACK(check_mempool_2);
+  //REGISTER_CALLBACK(check_orphaned_chain_1);
+  //REGISTER_CALLBACK(check_orphaned_switched_to_alternative);
+  //REGISTER_CALLBACK(check_orphaned_chain_2);
+  //REGISTER_CALLBACK(check_orphaned_switched_to_main);
+  //REGISTER_CALLBACK(check_orphaned_chain_38);
+  //REGISTER_CALLBACK(check_orphaned_chain_39);
+  //REGISTER_CALLBACK(check_orphaned_chain_40);
+  //REGISTER_CALLBACK(check_orphaned_chain_41);
 }
 //-----------------------------------------------------------------------------------------------------
 bool gen_simple_chain_split_1::generate(std::vector<test_event_entry> &events) const
@@ -164,14 +161,14 @@ bool gen_simple_chain_split_1::generate(std::vector<test_event_entry> &events) c
 bool gen_simple_chain_split_1::check_mempool_2(cryptonote::core& c, size_t ev_index, const std::vector<test_event_entry> &events)
 {
   DEFINE_TESTS_ERROR_CONTEXT("gen_simple_chain_split_1::check_mempool_2");
-  CHECK_TEST_CONDITION(c.get_pool_transactions_count() == 2);
+  CHECK_TEST_CONDITION(c.get_pool().get_transactions_count() == 2);
   return true;
 }
 //-----------------------------------------------------------------------------------------------------
 bool gen_simple_chain_split_1::check_mempool_1(cryptonote::core& c, size_t ev_index, const std::vector<test_event_entry> &events)
 {
   DEFINE_TESTS_ERROR_CONTEXT("gen_simple_chain_split_1::check_mempool_1");
-  CHECK_TEST_CONDITION(c.get_pool_transactions_count() == 3);
+  CHECK_TEST_CONDITION(c.get_pool().get_transactions_count() == 3);
   return true;
 }
 //-----------------------------------------------------------------------------------------------------
@@ -182,7 +179,7 @@ bool gen_simple_chain_split_1::check_split_not_switched(cryptonote::core& c, siz
   CHECK_EQ(c.get_current_blockchain_height(), 29);
   
   CHECK_EQ(c.get_blockchain_total_transactions(), 29);
-  CHECK_EQ(c.get_tail_id(), get_block_hash(boost::get<cryptonote::block>(events[28])));
+  CHECK_EQ(c.get_tail_id(), get_block_hash(var::get<cryptonote::block>(events[28])));
   CHECK_EQ(c.get_alternative_blocks_count(), 2);
   return true;
 }
@@ -193,7 +190,7 @@ bool gen_simple_chain_split_1::check_split_not_switched2(cryptonote::core& c, si
   //check height
   CHECK_EQ(c.get_current_blockchain_height(), 29);
   CHECK_EQ(c.get_blockchain_total_transactions(), 29);
-  CHECK_EQ(c.get_tail_id(), get_block_hash(boost::get<cryptonote::block>(events[28])));
+  CHECK_EQ(c.get_tail_id(), get_block_hash(var::get<cryptonote::block>(events[28])));
   CHECK_EQ(c.get_alternative_blocks_count(), 3);
   return true;
 }
@@ -205,7 +202,7 @@ bool gen_simple_chain_split_1::check_split_switched(cryptonote::core& c, size_t 
   //check height
   CHECK_EQ(c.get_current_blockchain_height(), 30);
   CHECK_EQ(c.get_blockchain_total_transactions(), 30);
-  CHECK_EQ(c.get_tail_id(), get_block_hash(boost::get<cryptonote::block>(events[34])));
+  CHECK_EQ(c.get_tail_id(), get_block_hash(var::get<cryptonote::block>(events[34])));
   CHECK_EQ(c.get_alternative_blocks_count(), 3);
   return true;
 }
@@ -216,7 +213,7 @@ bool gen_simple_chain_split_1::check_split_not_switched_back(cryptonote::core& c
   //check height
   CHECK_EQ(c.get_current_blockchain_height(), 34);
   CHECK_EQ(c.get_blockchain_total_transactions(), 34);
-  CHECK_EQ(c.get_tail_id(), get_block_hash(boost::get<cryptonote::block>(events[39])));
+  CHECK_EQ(c.get_tail_id(), get_block_hash(var::get<cryptonote::block>(events[39])));
   CHECK_EQ(c.get_alternative_blocks_count(), 8);
 
   return true;
@@ -229,7 +226,7 @@ bool gen_simple_chain_split_1::check_split_switched_back_1(cryptonote::core& c, 
   //check height
   CHECK_EQ(c.get_current_blockchain_height(), 35);
   CHECK_EQ(c.get_blockchain_total_transactions(), 35);
-  CHECK_EQ(c.get_tail_id(), get_block_hash(boost::get<cryptonote::block>(events[46])));
+  CHECK_EQ(c.get_tail_id(), get_block_hash(var::get<cryptonote::block>(events[46])));
   CHECK_EQ(c.get_alternative_blocks_count(), 8);
 
   return true;
@@ -241,7 +238,7 @@ bool gen_simple_chain_split_1::check_split_switched_back_2(cryptonote::core& c, 
   //check height
   CHECK_EQ(c.get_current_blockchain_height(), 36);
   CHECK_EQ(c.get_blockchain_total_transactions(), 36);
-  CHECK_EQ(c.get_tail_id(), get_block_hash(boost::get<cryptonote::block>(events[48])));
+  CHECK_EQ(c.get_tail_id(), get_block_hash(var::get<cryptonote::block>(events[48])));
   CHECK_EQ(c.get_alternative_blocks_count(), 8);
   return true;
 }

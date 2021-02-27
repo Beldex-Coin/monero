@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 //
 // All rights reserved.
 //
@@ -29,18 +29,20 @@
 // Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
 #include "transaction_info.h"
+#include "common_defines.h"
 
 
-using namespace std;
+namespace Wallet {
 
-namespace Monero {
-
+EXPORT
 TransactionInfo::~TransactionInfo() {}
 
-TransactionInfo::Transfer::Transfer(uint64_t _amount, const string &_address)
-    : amount(_amount), address(_address) {}
+EXPORT
+TransactionInfo::Transfer::Transfer(uint64_t _amount, std::string _address)
+    : amount(_amount), address(std::move(_address)) {}
 
 
+EXPORT
 TransactionInfoImpl::TransactionInfoImpl()
     : m_direction(Direction_Out)
       , m_pending(false)
@@ -57,97 +59,113 @@ TransactionInfoImpl::TransactionInfoImpl()
 
 }
 
+EXPORT
 TransactionInfoImpl::~TransactionInfoImpl()
 {
 
 }
 
+EXPORT
 int TransactionInfoImpl::direction() const
 {
     return m_direction;
 }
 
+EXPORT
 bool TransactionInfoImpl::isMasterNodeReward() const
 {
     return m_reward_type == reward_type::master_node;
 }
 
+EXPORT
 bool TransactionInfoImpl::isMinerReward() const
 {
     return m_reward_type == reward_type::miner;
 }
 
+EXPORT
 bool TransactionInfoImpl::isPending() const
 {
     return m_pending;
 }
 
+EXPORT
 bool TransactionInfoImpl::isFailed() const
 {
     return m_failed;
 }
 
+EXPORT
 uint64_t TransactionInfoImpl::amount() const
 {
     return m_amount;
 }
 
+EXPORT
 uint64_t TransactionInfoImpl::fee() const
 {
     return m_fee;
 }
 
+EXPORT
 uint64_t TransactionInfoImpl::blockHeight() const
 {
     return m_blockheight;
 }
 
+EXPORT
 std::set<uint32_t> TransactionInfoImpl::subaddrIndex() const
 {
     return m_subaddrIndex;
 }
 
+EXPORT
 uint32_t TransactionInfoImpl::subaddrAccount() const
 {
     return m_subaddrAccount;
 }
 
-string TransactionInfoImpl::label() const
+EXPORT
+std::string TransactionInfoImpl::label() const
 {
     return m_label;
 }
 
 
-string TransactionInfoImpl::hash() const
+EXPORT
+std::string TransactionInfoImpl::hash() const
 {
     return m_hash;
 }
 
+EXPORT
 std::time_t TransactionInfoImpl::timestamp() const
 {
     return m_timestamp;
 }
 
-string TransactionInfoImpl::paymentId() const
+EXPORT
+std::string TransactionInfoImpl::paymentId() const
 {
     return m_paymentid;
 }
 
+EXPORT
 const std::vector<TransactionInfo::Transfer> &TransactionInfoImpl::transfers() const
 {
     return m_transfers;
 }
 
+EXPORT
 uint64_t TransactionInfoImpl::confirmations() const
 {
     return m_confirmations;
 }
 
+EXPORT
 uint64_t TransactionInfoImpl::unlockTime() const
 {
     return m_unlock_time;
 }
 
 } // namespace
-
-namespace Bitmonero = Monero;

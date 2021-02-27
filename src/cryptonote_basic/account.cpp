@@ -31,9 +31,8 @@
 
 #include <fstream>
 
-#include "include_base_utils.h"
 #include "account.h"
-#include "warnings.h"
+#include "epee/warnings.h"
 #include "crypto/crypto.h"
 extern "C"
 {
@@ -41,12 +40,11 @@ extern "C"
 }
 #include "cryptonote_basic_impl.h"
 #include "cryptonote_format_utils.h"
+#include "cryptonote_config.h"
+#include "common/meta.h"
 
 #undef BELDEX_DEFAULT_LOG_CATEGORY
 #define BELDEX_DEFAULT_LOG_CATEGORY "account"
-
-#define KEYS_ENCRYPTION_SALT 'k'
-
 
 using namespace std;
 
@@ -62,7 +60,7 @@ DISABLE_VS_WARNINGS(4244 4345)
   //-----------------------------------------------------------------
   void account_keys::set_device( hw::device &hwdev)  {
     m_device = &hwdev;
-    MCDEBUG("device", "account_keys::set_device device type: "<<typeid(hwdev).name());
+    MCDEBUG("device", "account_keys::set_device device type: " << tools::type_name(typeid(hwdev)));
   }
   //-----------------------------------------------------------------
   static void derive_key(const crypto::chacha_key &base_key, crypto::chacha_key &key)
@@ -70,7 +68,7 @@ DISABLE_VS_WARNINGS(4244 4345)
     static_assert(sizeof(base_key) == sizeof(crypto::hash), "chacha key and hash should be the same size");
     epee::mlocked<tools::scrubbed_arr<char, sizeof(base_key)+1>> data;
     memcpy(data.data(), &base_key, sizeof(base_key));
-    data[sizeof(base_key)] = KEYS_ENCRYPTION_SALT;
+    data[sizeof(base_key)] = config::HASH_KEY_MEMORY;
     crypto::generate_chacha_key(data.data(), sizeof(data), key, 1);
   }
   //-----------------------------------------------------------------
@@ -155,6 +153,28 @@ DISABLE_VS_WARNINGS(4244 4345)
     m_keys.m_multisig_keys.clear();
   }
   //-----------------------------------------------------------------
+  static uint64_t creation_timestamp(bool use_genesis_timestamp)
+  {
+    uint64_t result = 0;
+    if (use_genesis_timestamp)
+    {
+      tm timestamp      = {};
+      timestamp.tm_year = 2018 - 1900; // 2018-05-03
+      timestamp.tm_mon  = 5 - 1;
+      timestamp.tm_mday = 1;
+
+      result = mktime(&timestamp);
+      if (result == (uint64_t)-1) // failure
+        result = 0;               // lowest value
+    }
+    else
+    {
+      result = time(NULL);
+    }
+
+    return result;
+  }
+  //-----------------------------------------------------------------
   crypto::secret_key account_base::generate(const crypto::secret_key& recovery_key, bool recover, bool two_random)
   {
     crypto::secret_key first = generate_keys(m_keys.m_account_address.m_spend_public_key, m_keys.m_spend_secret_key, recovery_key, recover);
@@ -164,25 +184,7 @@ DISABLE_VS_WARNINGS(4244 4345)
     keccak((uint8_t *)&m_keys.m_spend_secret_key, sizeof(crypto::secret_key), (uint8_t *)&second, sizeof(crypto::secret_key));
 
     generate_keys(m_keys.m_account_address.m_view_public_key, m_keys.m_view_secret_key, second, two_random ? false : true);
-
-    struct tm timestamp = {0};
-    timestamp.tm_year = 2014 - 1900;  // year 2014
-    timestamp.tm_mon = 6 - 1;  // month june
-    timestamp.tm_mday = 8;  // 8th of june
-    timestamp.tm_hour = 0;
-    timestamp.tm_min = 0;
-    timestamp.tm_sec = 0;
-
-    if (recover)
-    {
-      m_creation_timestamp = mktime(&timestamp);
-      if (m_creation_timestamp == (uint64_t)-1) // failure
-        m_creation_timestamp = 0; // lowest value
-    }
-    else
-    {
-      m_creation_timestamp = time(NULL);
-    }
+    m_creation_timestamp = creation_timestamp(recover /*use_genesis_timestamp*/);
     return first;
   }
   //-----------------------------------------------------------------
@@ -191,18 +193,7 @@ DISABLE_VS_WARNINGS(4244 4345)
     m_keys.m_account_address = address;
     m_keys.m_spend_secret_key = spendkey;
     m_keys.m_view_secret_key = viewkey;
-
-    struct tm timestamp = {0};
-    timestamp.tm_year = 2014 - 1900;  // year 2014
-    timestamp.tm_mon = 4 - 1;  // month april
-    timestamp.tm_mday = 15;  // 15th of april
-    timestamp.tm_hour = 0;
-    timestamp.tm_min = 0;
-    timestamp.tm_sec = 0;
-
-    m_creation_timestamp = mktime(&timestamp);
-    if (m_creation_timestamp == (uint64_t)-1) // failure
-      m_creation_timestamp = 0; // lowest value
+    m_creation_timestamp = creation_timestamp(true /*use_genesis_timestamp*/);
   }
 
   //-----------------------------------------------------------------
@@ -216,7 +207,7 @@ DISABLE_VS_WARNINGS(4244 4345)
   void account_base::create_from_device(hw::device &hwdev)
   {
     m_keys.set_device(hwdev);
-    MCDEBUG("device", "device type: "<<typeid(hwdev).name());
+    MCDEBUG("device", "device type: " << tools::type_name(typeid(hwdev)));
     CHECK_AND_ASSERT_THROW_MES(hwdev.init(), "Device init failed");
     CHECK_AND_ASSERT_THROW_MES(hwdev.connect(), "Device connect failed");
     try {
@@ -226,17 +217,7 @@ DISABLE_VS_WARNINGS(4244 4345)
       hwdev.disconnect();
       throw;
     }
-    struct tm timestamp = {0};
-    timestamp.tm_year = 2014 - 1900;  // year 2014
-    timestamp.tm_mon = 4 - 1;  // month april
-    timestamp.tm_mday = 15;  // 15th of april
-    timestamp.tm_hour = 0;
-    timestamp.tm_min = 0;
-    timestamp.tm_sec = 0;
-
-    m_creation_timestamp = mktime(&timestamp);
-    if (m_creation_timestamp == (uint64_t)-1) // failure
-      m_creation_timestamp = 0; // lowest value
+    m_creation_timestamp = creation_timestamp(true /*use_genesis_timestamp*/);
   }
 
   //-----------------------------------------------------------------

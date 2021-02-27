@@ -80,7 +80,7 @@ LMDB flags (more than one may be specified):
 
 ## Examples:
 
-```
+```bash
 $ beldex-blockchain-import --database lmdb#fastest
 
 $ beldex-blockchain-import --database lmdb#nosync

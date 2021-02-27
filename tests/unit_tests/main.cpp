@@ -30,23 +30,21 @@
 
 #include "gtest/gtest.h"
 
-#include <boost/filesystem/path.hpp>
-#include <boost/filesystem/operations.hpp>
+#include "common/fs.h"
 #include <boost/program_options.hpp>
 
 #include "p2p/net_node.h"
 #include "p2p/net_node.inl"
 #include "cryptonote_protocol/cryptonote_protocol_handler.h"
 #include "cryptonote_protocol/cryptonote_protocol_handler.inl"
-#include "include_base_utils.h"
-#include "string_tools.h"
+#include "epee/string_tools.h"
 #include "common/command_line.h"
 #include "common/util.h"
 #include "unit_tests_utils.h"
 
 namespace po = boost::program_options;
 
-boost::filesystem::path unit_test::data_dir;
+fs::path unit_test::data_dir;
 
 namespace nodetool { template class node_server<cryptonote::t_cryptonote_protocol_handler<cryptonote::core>>; }
 namespace cryptonote { template class t_cryptonote_protocol_handler<cryptonote::core>; }
@@ -65,6 +63,8 @@ int main(int argc, char** argv)
   po::options_description desc_options("Command line options");
   const command_line::arg_descriptor<std::string> arg_data_dir = { "data-dir", "Data files directory", DEFAULT_DATA_DIR };
   command_line::add_arg(desc_options, arg_data_dir);
+  const command_line::arg_descriptor<int> arg_log_level = { "log-level", "Log level (0-4)", 1 };
+  command_line::add_arg(desc_options, arg_log_level);
 
   po::variables_map vm;
   bool r = command_line::handle_error_helper(desc_options, [&]()
@@ -77,6 +77,11 @@ int main(int argc, char** argv)
     return 1;
 
   unit_test::data_dir = command_line::get_arg(vm, arg_data_dir);
+  const int log_level = command_line::get_arg(vm, arg_log_level);
+  if (0 <= log_level && log_level <= 4)
+  {
+    mlog_set_log_level(log_level);
+  }
 
   CATCH_ENTRY_L0("main", 1);
 

@@ -27,11 +27,7 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-# include (${PROJECT_SOURCE_DIR}/cmake/libutils.cmake)
-
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-
-set(wallet_api_sources
+add_library(wallet_api
   wallet.cpp
   wallet_manager.cpp
   transaction_info.cpp
@@ -39,49 +35,24 @@ set(wallet_api_sources
   pending_transaction.cpp
   utils.cpp
   address_book.cpp
+  stake_unlock_result.cpp
   subaddress.cpp
   subaddress_account.cpp
   unsigned_transaction.cpp)
 
-set(wallet_api_headers
-    wallet2_api.h)
-
-set(wallet_api_private_headers
-  wallet.h
-  wallet_manager.h
-  transaction_info.h
-  transaction_history.h
-  pending_transaction.h
-  common_defines.h
-  address_book.h
-  subaddress.h
-  subaddress_account.h
-  unsigned_transaction.h)
-
-beldex_private_headers(wallet_api
-  ${wallet_api_private_headers})
-beldex_add_library(wallet_api
-  ${wallet_api_sources}
-  ${wallet_api_headers}
-  ${wallet_api_private_headers})
 target_link_libraries(wallet_api
   PUBLIC
     wallet
-    common
     cryptonote_core
     mnemonics
-    ${LMDB_LIBRARY}
-    ${Boost_CHRONO_LIBRARY}
-    ${Boost_SERIALIZATION_LIBRARY}
-    ${Boost_FILESYSTEM_LIBRARY}
-    ${Boost_SYSTEM_LIBRARY}
-    ${Boost_THREAD_LIBRARY}
-    ${Boost_REGEX_LIBRARY}
+    lmdb
+    Boost::serialization
+    filesystem
+    Boost::thread
   PRIVATE
-    ${EXTRA_LIBRARIES})
+    extra)
 
 set_property(TARGET wallet_api PROPERTY EXCLUDE_FROM_ALL TRUE)
-set_property(TARGET obj_wallet_api PROPERTY EXCLUDE_FROM_ALL TRUE)
 
 if(IOS)
     set(lib_folder lib-${ARCH})
@@ -91,3 +62,91 @@ endif()
 
 install(FILES ${wallet_api_headers}
     DESTINATION include/wallet/api)
+
+function(combine_archives output_archive)
+  set(FULL_OUTPUT_PATH ${CMAKE_CURRENT_BINARY_DIR}/lib${output_archive}.a)
+  set(output_archive_dummy_file ${CMAKE_CURRENT_BINARY_DIR}/${output_archive}.dummy.cpp)
+  add_custom_command(OUTPUT ${output_archive_dummy_file}
+                     COMMAND touch ${output_archive_dummy_file}
+                     DEPENDS ${ARGN})
+  add_library(${output_archive} STATIC EXCLUDE_FROM_ALL ${output_archive_dummy_file})
+
+  if(NOT APPLE)
+    set(mri_file ${CMAKE_CURRENT_BINARY_DIR}/${output_archive}.mri)
+    set(mri_content "create ${FULL_OUTPUT_PATH}\n")
+    foreach(in_archive ${ARGN})
+        string(APPEND mri_content "addlib $<TARGET_FILE:${in_archive}>\n")
+    endforeach()
+    string(APPEND mri_content "save\nend\n")
+    file(GENERATE OUTPUT ${mri_file} CONTENT "${mri_content}")
+
+    add_custom_command(TARGET ${output_archive}
+                       POST_BUILD
+                       COMMAND ar -M < ${mri_file})
+  else()
+    set(merge_libs)
+    foreach(in_archive ${ARGN})
+      list(APPEND merge_libs $<TARGET_FILE:${in_archive}>)
+    endforeach()
+    add_custom_command(TARGET ${output_archive}
+                       POST_BUILD
+                       COMMAND /usr/bin/libtool -static -o ${FULL_OUTPUT_PATH} ${merge_libs})
+  endif()
+endfunction(combine_archives)
+
+if (STATIC AND BUILD_STATIC_DEPS)
+    set(merged_protobuf)
+    if(TARGET protobuf_lite)
+      set(merged_protobuf protobuf_lite)
+    endif()
+
+    combine_archives(wallet_merged
+            wallet_api
+            wallet
+            multisig
+            cryptonote_core
+            cryptonote_basic
+            cryptonote_protocol
+            mnemonics
+            common
+            cncrypto
+            device
+            ringct
+            ringct_basic
+            checkpoints
+            version
+            net
+            device_trezor
+            epee
+            blockchain_db
+            rpc_http_client
+            rpc_commands
+
+            # Static deps:
+            Boost::program_options Boost::serialization Boost::system Boost::thread
+            zlib
+            OpenSSL::SSL OpenSSL::Crypto
+            expat
+            libunbound
+            sqlite3
+            ${merged_protobuf}
+            sodium
+            libzmq
+            CURL::libcurl
+            oxenmq::oxenmq
+            lmdb
+            easylogging
+            randomx
+            uSockets
+            cpr
+            )
+
+    if(IOS)
+        set(lib_folder lib-${ARCH})
+    else()
+        set(lib_folder lib)
+    endif()
+    install(TARGETS wallet_merged
+        ARCHIVE DESTINATION ${lib_folder}
+        EXCLUDE_FROM_ALL)
+endif()

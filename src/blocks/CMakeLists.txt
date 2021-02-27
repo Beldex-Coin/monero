@@ -1,4 +1,4 @@
-# Copyright (c) 2014-2018, The Monero Project
+# Copyright (c) 2014-2019, The Monero Project
 # 
 # All rights reserved.
 # 
@@ -26,23 +26,11 @@
 # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-set(GENERATED_SOURCES "")
-
-foreach(BLOB_NAME checkpoints testnet_blocks stagenet_blocks)
-    set(OUTPUT_C_SOURCE "generated_${BLOB_NAME}.c")
-    list(APPEND GENERATED_SOURCES ${OUTPUT_C_SOURCE})
-    set(INPUT_DAT_FILE "${BLOB_NAME}.dat")
-    add_custom_command(
-        OUTPUT ${OUTPUT_C_SOURCE} 
-        MAIN_DEPENDENCY ${INPUT_DAT_FILE} 
-        COMMAND 
-            cd ${CMAKE_CURRENT_BINARY_DIR} && 
-            echo "'#include\t<stddef.h>'" > ${OUTPUT_C_SOURCE} &&
-            echo "'const\tunsigned\tchar\t${BLOB_NAME}[]={'" >> ${OUTPUT_C_SOURCE} &&
-            od -v -An -tx1 ${CMAKE_CURRENT_SOURCE_DIR}/${INPUT_DAT_FILE} | sed -e "'s/[0-9a-fA-F]\\{1,\\}/0x&,/g'" -e "'$$s/.$$//'" >> ${OUTPUT_C_SOURCE} &&
-            echo "'};'" >> ${OUTPUT_C_SOURCE} &&
-            echo "'const\tsize_t\t${BLOB_NAME}_len\t=\tsizeof(${BLOB_NAME});'" >> ${OUTPUT_C_SOURCE}
-    )
+foreach(NET mainnet devnet testnet)
+    file(READ "${NET}_blocks.dat" ${NET}_blocks_data HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "\\\\x\\1" ${NET}_blocks_data "${${NET}_blocks_data}")
 endforeach()
 
-add_library(blocks STATIC blocks.cpp ${GENERATED_SOURCES})
+configure_file(blocks.cpp.in blocks.cpp @ONLY)
+add_library(blocks "${CMAKE_CURRENT_BINARY_DIR}/blocks.cpp")
+target_link_libraries(blocks PRIVATE extra)

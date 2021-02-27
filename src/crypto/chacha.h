@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -39,9 +39,10 @@
 #if defined(__cplusplus)
 #include <memory.h>
 
-#include "memwipe.h"
-#include "mlocker.h"
+#include "epee/memwipe.h"
+#include "epee/mlocker.h"
 #include "hash.h"
+#include "cn_heavy_hash.hpp"
 
 namespace crypto {
   extern "C" {
@@ -53,12 +54,9 @@ namespace crypto {
 
   using chacha_key = epee::mlocked<tools::scrubbed_arr<uint8_t, CHACHA_KEY_SIZE>>;
 
-#pragma pack(push, 1)
-  // MS VC 2012 doesn't interpret `class chacha_iv` as POD in spite of [9.0.10], so it is a struct
   struct chacha_iv {
     uint8_t data[CHACHA_IV_SIZE];
   };
-#pragma pack(pop)
 
   static_assert(sizeof(chacha_key) == CHACHA_KEY_SIZE && sizeof(chacha_iv) == CHACHA_IV_SIZE, "Invalid structure size");
 

@@ -30,54 +30,33 @@
 
 #pragma once
 
+#include <iomanip>
 #include <iostream>
-#include <stdint.h>
+#include <cstdint>
+#include <regex>
+#include <chrono>
 
-#include <boost/chrono.hpp>
-#include <boost/regex.hpp>
-
-#include "misc_language.h"
+#include "epee/misc_language.h"
+#include "epee/stats.h"
 #include "common/perf_timer.h"
-
-class performance_timer
-{
-public:
-  typedef boost::chrono::high_resolution_clock clock;
-
-  performance_timer()
-  {
-    m_base = clock::now();
-  }
-
-  void start()
-  {
-    m_start = clock::now();
-  }
-
-  int elapsed_ms()
-  {
-    clock::duration elapsed = clock::now() - m_start;
-    return static_cast<int>(boost::chrono::duration_cast<boost::chrono::milliseconds>(elapsed).count());
-  }
-
-private:
-  clock::time_point m_base;
-  clock::time_point m_start;
-};
+#include "timings.h"
 
 struct Params
 {
+  TimingsDatabase td;
   bool verbose;
   bool stats;
   unsigned loop_multiplier;
 };
+
+using namespace std::literals;
 
 template <typename T>
 class test_runner
 {
 public:
   test_runner(const Params &params)
-    : m_elapsed(0)
+    : m_elapsed(0s)
     , m_params(params)
     , m_per_call_timers(T::loop_count * params.loop_multiplier, {true})
   {
@@ -85,17 +64,19 @@ public:
 
   bool run()
   {
+    static_assert(0 < T::loop_count, "T::loop_count must be greater than 0");
+
     T test;
     if (!test.init())
       return false;
 
-    performance_timer timer;
-    timer.start();
+    using clock = std::chrono::steady_clock;
+    auto start = clock::now();
     warm_up();
     if (m_params.verbose)
-      std::cout << "Warm up: " << timer.elapsed_ms() << " ms" << std::endl;
+      std::cout << "Warm up: " << std::chrono::duration<double>{clock::now() - start}.count() << " s" << std::endl;
 
-    timer.start();
+    start = clock::now();
     for (size_t i = 0; i < T::loop_count * m_params.loop_multiplier; ++i)
     {
       if (m_params.stats)
@@ -105,71 +86,33 @@ public:
       if (m_params.stats)
         m_per_call_timers[i].pause();
     }
-    m_elapsed = timer.elapsed_ms();
+    m_elapsed = clock::now() - start;
+    m_stats.reset(new Stats<tools::PerformanceTimer, double>(m_per_call_timers));
 
     return true;
   }
 
-  int elapsed_time() const { return m_elapsed; }
+  std::chrono::duration<double> elapsed_time() const { return m_elapsed; }
+  size_t get_size() const { return m_stats->get_size(); }
 
-  int time_per_call(int scale = 1) const
+  std::chrono::duration<double> time_per_call() const
   {
-    static_assert(0 < T::loop_count, "T::loop_count must be greater than 0");
-    return m_elapsed * scale / (T::loop_count * m_params.loop_multiplier);
+    static_assert(T::loop_count > 0);
+    return m_elapsed / (T::loop_count * m_params.loop_multiplier);
   }
 
-  uint64_t per_call_min() const
-  {
-    uint64_t v = std::numeric_limits<uint64_t>::max();
-    for (const auto &pt: m_per_call_timers)
-      v = std::min(v, pt.value());
-    return v;
-  }
+  double get_min() const { return m_stats->get_min(); }
+  double get_max() const { return m_stats->get_max(); }
+  double get_mean() const { return m_stats->get_mean(); }
+  double get_median() const { return m_stats->get_median(); }
+  double get_stddev() const { return m_stats->get_standard_deviation(); }
+  double get_non_parametric_skew() const { return m_stats->get_non_parametric_skew(); }
+  std::vector<double> get_quantiles(size_t n) const { return m_stats->get_quantiles(n); }
 
-  uint64_t per_call_max() const
+  bool is_same_distribution(size_t npoints, double mean, double stddev) const
   {
-    uint64_t v = std::numeric_limits<uint64_t>::min();
-    for (const auto &pt: m_per_call_timers)
-      v = std::max(v, pt.value());
-    return v;
+    return m_stats->is_same_distribution_99(npoints, mean, stddev);
   }
-
-  uint64_t per_call_mean() const
-  {
-    uint64_t v = 0;
-    for (const auto &pt: m_per_call_timers)
-      v += pt.value();
-    return v / m_per_call_timers.size();
-  }
-
-  uint64_t per_call_median() const
-  {
-    std::vector<uint64_t> values;
-    values.reserve(m_per_call_timers.size());
-    for (const auto &pt: m_per_call_timers)
-      values.push_back(pt.value());
-    return epee::misc_utils::median(values);
-  }
-
-  uint64_t per_call_stddev() const
-  {
-    if (m_per_call_timers.size() <= 1)
-      return 0;
-    const uint64_t mean = per_call_mean();
-    uint64_t acc = 0;
-    for (const auto &pt: m_per_call_timers)
-    {
-      int64_t dv = pt.value() - mean;
-      acc += dv * dv;
-    }
-    acc /= m_per_call_timers.size () - 1;
-    return sqrt(acc);
-  }
-
-  uint64_t min_time_ns() const { return tools::ticks_to_ns(per_call_min()); }
-  uint64_t max_time_ns() const { return tools::ticks_to_ns(per_call_max()); }
-  uint64_t median_time_ns() const { return tools::ticks_to_ns(per_call_median()); }
-  uint64_t standard_deviation_time_ns() const { return tools::ticks_to_ns(per_call_stddev()); }
 
 private:
   /**
@@ -188,16 +131,33 @@ private:
 
 private:
   volatile uint64_t m_warm_up;  ///<! This field is intended for preclude compiler optimizations
-  int m_elapsed;
+  std::chrono::duration<double> m_elapsed;
   Params m_params;
   std::vector<tools::PerformanceTimer> m_per_call_timers;
+  std::unique_ptr<Stats<tools::PerformanceTimer, double>> m_stats;
 };
 
-template <typename T>
-void run_test(const std::string &filter, const Params &params, const char* test_name)
+std::string elapsed_str(std::chrono::duration<double> seconds)
 {
-  boost::smatch match;
-  if (!filter.empty() && !boost::regex_match(std::string(test_name), match, boost::regex(filter)))
+  std::pair<double, std::string> val;
+  if (seconds >= 1s)
+    val = {seconds.count(), "s"};
+  else if (seconds >= 1ms)
+    val = {seconds.count()*1e3, "ms"};
+  else if (seconds >= 1us)
+    val = {seconds.count()*1e6, u8"µs"};
+  else
+    val = {seconds.count()*1e9, u8"ns"};
+  std::ostringstream s;
+  s << std::fixed << std::setprecision(3) << val.first << val.second;
+  return s.str();
+}
+std::string elapsed_str(double seconds) { return elapsed_str(std::chrono::duration<double>{seconds}); }
+
+template <typename T>
+void run_test(const std::string &filter, Params &params, const char* test_name)
+{
+  if (std::cmatch m; !filter.empty() && !std::regex_match(test_name, m, std::regex(filter)))
     return;
 
   test_runner<T> runner(params);
@@ -207,38 +167,46 @@ void run_test(const std::string &filter, const Params &params, const char* test_
     {
       std::cout << test_name << " - OK:\n";
       std::cout << "  loop count:    " << T::loop_count * params.loop_multiplier << '\n';
-      std::cout << "  elapsed:       " << runner.elapsed_time() << " ms\n";
+      std::cout << "  elapsed:       " << elapsed_str(runner.elapsed_time()) << '\n';
       if (params.stats)
       {
-        std::cout << "  min:       " << runner.min_time_ns() << " ns\n";
-        std::cout << "  max:       " << runner.max_time_ns() << " ns\n";
-        std::cout << "  median:    " << runner.median_time_ns() << " ns\n";
-        std::cout << "  std dev:   " << runner.standard_deviation_time_ns() << " ns\n";
+        std::cout << "  min:       " << elapsed_str(runner.get_min()) << '\n';
+        std::cout << "  max:       " << elapsed_str(runner.get_max()) << '\n';
+        std::cout << "  median:    " << elapsed_str(runner.get_median()) << '\n';
+        std::cout << "  std dev:   " << elapsed_str(runner.get_stddev()) << '\n';
       }
     }
     else
     {
       std::cout << test_name << " (" << T::loop_count * params.loop_multiplier << " calls) - OK:";
     }
-    const char *unit = "ms";
-    uint64_t scale = 1000000;
-    int time_per_call = runner.time_per_call();
-    if (time_per_call < 30000) {
-     time_per_call = runner.time_per_call(1000);
-#ifdef _WIN32
-     unit = "\xb5s";
-#else
-     unit = "µs";
-#endif
-     scale = 1000;
-    }
-    std::cout << (params.verbose ? "  time per call: " : " ") << time_per_call << " " << unit << "/call" << (params.verbose ? "\n" : "");
+    const auto quantiles = runner.get_quantiles(10);
+    double min = runner.get_min();
+    double max = runner.get_max();
+    double med = runner.get_median();
+    double mean = runner.get_mean();
+    double stddev = runner.get_stddev();
+    double npskew = runner.get_non_parametric_skew();
+
+    std::vector<TimingsDatabase::instance> prev_instances = params.td.get(test_name);
+    params.td.add(test_name, {time(NULL), runner.get_size(), min, max, mean, med, stddev, npskew, quantiles});
+
+    std::cout << (params.verbose ? "  time per call: " : " ") << elapsed_str(runner.time_per_call()) << "/call" << (params.verbose ? "\n" : "");
     if (params.stats)
     {
-      uint64_t min_ns = runner.min_time_ns() / scale;
-      uint64_t med_ns = runner.median_time_ns() / scale;
-      uint64_t stddev_ns = runner.standard_deviation_time_ns() / scale;
-      std::cout << " (min " << min_ns << " " << unit << ", median " << med_ns << " " << unit << ", std dev " << stddev_ns << " " << unit << ")";
+      std::string cmp;
+      if (!prev_instances.empty())
+      {
+        const TimingsDatabase::instance &prev_instance = prev_instances.back();
+        if (!runner.is_same_distribution(prev_instance.npoints, prev_instance.mean, prev_instance.stddev))
+        {
+          double pc = fabs(100. * (prev_instance.mean - runner.get_mean()) / prev_instance.mean);
+          cmp = ", " + std::to_string(pc) + "% " + (mean > prev_instance.mean ? "slower" : "faster");
+        }
+        cmp += "  -- " + std::to_string(prev_instance.mean);
+      }
+      std::cout << " (min " << elapsed_str(min) << ", 90th " << elapsed_str(quantiles[9]) <<
+        ", median " << elapsed_str(med) << ", std dev " << elapsed_str(stddev) << ")" << cmp;
     }
     std::cout << std::endl;
   }

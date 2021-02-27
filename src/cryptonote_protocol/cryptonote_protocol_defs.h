@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 // 
 // All rights reserved.
 // 
@@ -31,10 +31,17 @@
 #pragma once
 
 #include <list>
-#include "serialization/keyvalue_serialization.h"
+#include "epee/serialization/keyvalue_serialization.h"
 #include "cryptonote_basic/cryptonote_basic.h"
+#include "epee/net/net_utils_base.h"
 #include "cryptonote_basic/blobdatatype.h"
-#include "cryptonote_core/master_node_deregister.h"
+
+#include "common/beldex.h"
+
+namespace master_nodes
+{
+  struct quorum_vote_t;
+};
 
 namespace cryptonote
 {
@@ -50,23 +57,25 @@ namespace cryptonote
     bool incoming;
     bool localhost;
     bool local_ip;
+    bool ssl;
 
     std::string address;
     std::string host;
     std::string ip;
     std::string port;
+    uint16_t rpc_port;
 
     std::string peer_id;
 
     uint64_t recv_count;
-    uint64_t recv_idle_time;
+    std::chrono::milliseconds recv_idle_time;
 
     uint64_t send_count;
-    uint64_t send_idle_time;
+    std::chrono::milliseconds send_idle_time;
 
     std::string state;
 
-    uint64_t live_time;
+    std::chrono::milliseconds live_time;
 
 	uint64_t avg_download;
 	uint64_t current_download;
@@ -82,63 +91,35 @@ namespace cryptonote
 
     uint32_t pruning_seed;
 
-    BEGIN_KV_SERIALIZE_MAP()
-      KV_SERIALIZE(incoming)
-      KV_SERIALIZE(localhost)
-      KV_SERIALIZE(local_ip)
-      KV_SERIALIZE(address)
-      KV_SERIALIZE(host)
-      KV_SERIALIZE(ip)
-      KV_SERIALIZE(port)
-      KV_SERIALIZE(peer_id)
-      KV_SERIALIZE(recv_count)
-      KV_SERIALIZE(recv_idle_time)
-      KV_SERIALIZE(send_count)
-      KV_SERIALIZE(send_idle_time)
-      KV_SERIALIZE(state)
-      KV_SERIALIZE(live_time)
-      KV_SERIALIZE(avg_download)
-      KV_SERIALIZE(current_download)
-      KV_SERIALIZE(avg_upload)
-      KV_SERIALIZE(current_upload)
-      KV_SERIALIZE(support_flags)
-      KV_SERIALIZE(connection_id)
-      KV_SERIALIZE(height)
-      KV_SERIALIZE(pruning_seed)
-    END_KV_SERIALIZE_MAP()
+    uint8_t address_type;
+
+    KV_MAP_SERIALIZABLE
   };
 
   /************************************************************************/
   /*                                                                      */
   /************************************************************************/
+  BELDEX_RPC_DOC_INTROSPECT
+  struct serializable_blink_metadata {
+    crypto::hash tx_hash;
+    uint64_t height;
+    std::vector<uint8_t> quorum;
+    std::vector<uint8_t> position;
+    std::vector<crypto::signature> signature;
+    KV_MAP_SERIALIZABLE
+  };
+
+  /************************************************************************/
+  /*                                                                      */
+  /************************************************************************/
+  BELDEX_RPC_DOC_INTROSPECT
   struct block_complete_entry
   {
     blobdata block;
     std::vector<blobdata> txs;
-    BEGIN_KV_SERIALIZE_MAP()
-      KV_SERIALIZE(block)
-      KV_SERIALIZE(txs)
-    END_KV_SERIALIZE_MAP()
-  };
-
-
-  /************************************************************************/
-  /*                                                                      */
-  /************************************************************************/
-  struct NOTIFY_NEW_BLOCK
-  {
-    const static int ID = BC_COMMANDS_POOL_BASE + 1;
-
-    struct request
-    {
-      block_complete_entry b;
-      uint64_t current_blockchain_height;
-
-      BEGIN_KV_SERIALIZE_MAP()
-        KV_SERIALIZE(b)
-        KV_SERIALIZE(current_blockchain_height)
-      END_KV_SERIALIZE_MAP()
-    };
+    blobdata checkpoint;
+    std::vector<serializable_blink_metadata> blinks;
+    KV_MAP_SERIALIZABLE
   };
 
   /************************************************************************/
@@ -150,51 +131,40 @@ namespace cryptonote
 
     struct request
     {
-      std::vector<blobdata>   txs;
+      std::vector<blobdata> txs;
+      std::vector<serializable_blink_metadata> blinks;
+      bool requested = false;
       std::string _; // padding
 
-      BEGIN_KV_SERIALIZE_MAP()
-        KV_SERIALIZE(txs)
-        KV_SERIALIZE(_)
-      END_KV_SERIALIZE_MAP()
+      KV_MAP_SERIALIZABLE
     };
   };
   /************************************************************************/
   /*                                                                      */
   /************************************************************************/
-  struct NOTIFY_REQUEST_GET_OBJECTS
+  struct NOTIFY_REQUEST_GET_BLOCKS
   {
     const static int ID = BC_COMMANDS_POOL_BASE + 3;
 
     struct request
     {
-      std::vector<crypto::hash>    txs;
-      std::vector<crypto::hash>    blocks;
+      std::vector<crypto::hash> blocks;
 
-      BEGIN_KV_SERIALIZE_MAP()
-        KV_SERIALIZE_CONTAINER_POD_AS_BLOB(txs)
-        KV_SERIALIZE_CONTAINER_POD_AS_BLOB(blocks)
-      END_KV_SERIALIZE_MAP()
+      KV_MAP_SERIALIZABLE
     };
   };
 
-  struct NOTIFY_RESPONSE_GET_OBJECTS
+  struct NOTIFY_RESPONSE_GET_BLOCKS
   {
     const static int ID = BC_COMMANDS_POOL_BASE + 4;
 
     struct request
     {
-      std::vector<blobdata>              txs;
       std::vector<block_complete_entry>  blocks;
       std::vector<crypto::hash>          missed_ids;
-      uint64_t                         current_blockchain_height;
+      uint64_t                           current_blockchain_height;
 
-      BEGIN_KV_SERIALIZE_MAP()
-        KV_SERIALIZE(txs)
-        KV_SERIALIZE(blocks)
-        KV_SERIALIZE_CONTAINER_POD_AS_BLOB(missed_ids)
-        KV_SERIALIZE(current_blockchain_height)
-      END_KV_SERIALIZE_MAP()
+      KV_MAP_SERIALIZABLE
     };
   };
 
@@ -206,14 +176,10 @@ namespace cryptonote
     crypto::hash  top_id;
     uint8_t top_version;
     uint32_t pruning_seed;
+    std::vector<uint64_t> blink_blocks;
+    std::vector<crypto::hash> blink_hash;
 
-    BEGIN_KV_SERIALIZE_MAP()
-      KV_SERIALIZE(current_height)
-      KV_SERIALIZE(cumulative_difficulty)
-      KV_SERIALIZE_VAL_POD_AS_BLOB(top_id)
-      KV_SERIALIZE_OPT(top_version, (uint8_t)0)
-      KV_SERIALIZE_OPT(pruning_seed, (uint32_t)0)
-    END_KV_SERIALIZE_MAP()
+    KV_MAP_SERIALIZABLE
   };
 
   struct NOTIFY_REQUEST_CHAIN
@@ -222,11 +188,9 @@ namespace cryptonote
 
     struct request
     {
-      std::list<crypto::hash> block_ids; /*IDs of the first 10 blocks are sequential, next goes with pow(2,n) offset, like 2, 4, 8, 16, 32, 64 and so on, and the last one is always genesis block */
+      std::list<crypto::hash> block_ids; // IDs of blocks at linear then exponential drop off, ending in genesis block; see blockchain.cpp for details
 
-      BEGIN_KV_SERIALIZE_MAP()
-        KV_SERIALIZE_CONTAINER_POD_AS_BLOB(block_ids)
-      END_KV_SERIALIZE_MAP()
+      KV_MAP_SERIALIZABLE
     };
   };
 
@@ -241,12 +205,7 @@ namespace cryptonote
       uint64_t cumulative_difficulty;
       std::vector<crypto::hash> m_block_ids;
 
-      BEGIN_KV_SERIALIZE_MAP()
-        KV_SERIALIZE(start_height)
-        KV_SERIALIZE(total_height)
-        KV_SERIALIZE(cumulative_difficulty)
-        KV_SERIALIZE_CONTAINER_POD_AS_BLOB(m_block_ids)
-      END_KV_SERIALIZE_MAP()
+      KV_MAP_SERIALIZABLE
     };
   };
   
@@ -262,10 +221,7 @@ namespace cryptonote
       block_complete_entry b;
       uint64_t current_blockchain_height;
 
-      BEGIN_KV_SERIALIZE_MAP()
-        KV_SERIALIZE(b)
-        KV_SERIALIZE(current_blockchain_height)
-      END_KV_SERIALIZE_MAP()
+      KV_MAP_SERIALIZABLE
     };
   };  
 
@@ -282,30 +238,10 @@ namespace cryptonote
       uint64_t current_blockchain_height;      
       std::vector<uint64_t> missing_tx_indices;
       
-      BEGIN_KV_SERIALIZE_MAP()
-        KV_SERIALIZE_VAL_POD_AS_BLOB(block_hash)
-        KV_SERIALIZE(current_blockchain_height)
-        KV_SERIALIZE_CONTAINER_POD_AS_BLOB(missing_tx_indices)
-      END_KV_SERIALIZE_MAP()
+      KV_MAP_SERIALIZABLE
     };
   }; 
 
-  /************************************************************************/
-  /*                                                                      */
-  /************************************************************************/
-  struct NOTIFY_NEW_DEREGISTER_VOTE
-  {
-    const static int ID = BC_COMMANDS_POOL_BASE + 10;
-
-    struct request
-    {
-      std::vector<master_nodes::deregister_vote> votes;
-      BEGIN_KV_SERIALIZE_MAP()
-        KV_SERIALIZE_CONTAINER_POD_AS_BLOB(votes)
-      END_KV_SERIALIZE_MAP()
-    };
-  };
-    
   /************************************************************************/
   /*                                                                      */
   /************************************************************************/
@@ -315,22 +251,67 @@ namespace cryptonote
 
     struct request
     {
-      uint16_t snode_version_major;
-      uint16_t snode_version_minor;
-      uint16_t snode_version_patch;
+      std::array<uint16_t, 3> snode_version;
 
       uint64_t timestamp;
       crypto::public_key pubkey;
       crypto::signature sig;
+      crypto::ed25519_public_key pubkey_ed25519;
+      crypto::ed25519_signature sig_ed25519;
+      uint32_t public_ip;
+      uint16_t storage_port;
+      uint16_t storage_lmq_port;
+      uint16_t qnet_port;
 
-      BEGIN_KV_SERIALIZE_MAP()
-        KV_SERIALIZE(snode_version_major)
-        KV_SERIALIZE(snode_version_minor)
-        KV_SERIALIZE(snode_version_patch)
-        KV_SERIALIZE(timestamp)
-        KV_SERIALIZE_VAL_POD_AS_BLOB(pubkey)
-        KV_SERIALIZE_VAL_POD_AS_BLOB(sig)
-      END_KV_SERIALIZE_MAP()
+      KV_MAP_SERIALIZABLE
+    };
+  };
+
+  /************************************************************************/
+  /*                                                                      */
+  /************************************************************************/
+  struct NOTIFY_REQUEST_BLOCK_BLINKS
+  {
+    constexpr static int ID = BC_COMMANDS_POOL_BASE + 13;
+    struct request
+    {
+      std::vector<uint64_t> heights;
+      KV_MAP_SERIALIZABLE
+    };
+  };
+
+  struct NOTIFY_RESPONSE_BLOCK_BLINKS
+  {
+    constexpr static int ID = BC_COMMANDS_POOL_BASE + 14;
+    struct request
+    {
+      std::vector<crypto::hash> txs;
+      KV_MAP_SERIALIZABLE
+    };
+  };
+
+  /************************************************************************/
+  /*                                                                      */
+  /************************************************************************/
+  struct NOTIFY_REQUEST_GET_TXS
+  {
+    constexpr static int ID = BC_COMMANDS_POOL_BASE + 15;
+
+    struct request
+    {
+      std::vector<crypto::hash> txs;
+      KV_MAP_SERIALIZABLE
+    };
+  };
+
+  struct NOTIFY_NEW_MASTER_NODE_VOTE
+  {
+    const static int ID = BC_COMMANDS_POOL_BASE + 16;
+    struct request
+    {
+      std::vector<master_nodes::quorum_vote_t> votes;
+
+      KV_MAP_SERIALIZABLE
     };
   };
 }

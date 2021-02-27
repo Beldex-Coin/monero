@@ -67,7 +67,7 @@ static void make_wallet(unsigned int idx, tools::wallet2 &wallet)
   ASSERT_TRUE(idx < sizeof(test_addresses) / sizeof(test_addresses[0]));
 
   crypto::secret_key spendkey;
-  epee::string_tools::hex_to_pod(test_addresses[idx].spendkey, spendkey);
+  tools::hex_to_type(test_addresses[idx].spendkey, spendkey);
 
   try
   {
@@ -76,7 +76,7 @@ static void make_wallet(unsigned int idx, tools::wallet2 &wallet)
     wallet.generate("", "", spendkey, true, false);
     ASSERT_TRUE(test_addresses[idx].address == wallet.get_account().get_public_address_str(cryptonote::TESTNET));
     wallet.decrypt_keys("");
-    ASSERT_TRUE(test_addresses[idx].spendkey == epee::string_tools::pod_to_hex(wallet.get_account().get_keys().m_spend_secret_key));
+    ASSERT_TRUE(test_addresses[idx].spendkey == tools::type_to_hex(wallet.get_account().get_keys().m_spend_secret_key));
     wallet.encrypt_keys("");
   }
   catch (const std::exception &e)

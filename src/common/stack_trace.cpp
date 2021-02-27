@@ -45,7 +45,7 @@
 #endif
 #include <boost/algorithm/string.hpp>
 #include "common/stack_trace.h"
-#include "misc_log_ex.h"
+#include "epee/misc_log_ex.h"
 
 #undef BELDEX_DEFAULT_LOG_CATEGORY
 #define BELDEX_DEFAULT_LOG_CATEGORY "stacktrace"

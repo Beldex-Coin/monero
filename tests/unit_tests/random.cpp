@@ -34,12 +34,12 @@ extern "C" {
 #include "crypto/crypto-ops.h"
 }
 
-TEST(random32_unbiased, less_than_order)
+TEST(random_scalar, less_than_order)
 {
   unsigned char tmp[32], tmp2[32];
   for (int i = 0; i < 1000; ++i)
   {
-    crypto::random32_unbiased(tmp);
+    crypto::random_scalar(tmp);
     memcpy(tmp2, tmp, 32);
     sc_reduce32(tmp2);
     ASSERT_EQ(memcmp(tmp, tmp2, 32), 0);

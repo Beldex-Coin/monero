@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2018, The Monero Project
+// Copyright (c) 2014-2019, The Monero Project
 //
 // All rights reserved.
 //
@@ -32,9 +32,7 @@
 #include <string>
 #include <ctime>
 
-namespace Monero {
-
-class TransactionHistoryImpl;
+namespace Wallet {
 
 enum class reward_type {
     unspecified,
@@ -92,5 +90,3 @@ private:
 };
 
 } // namespace
-
-namespace Bitmonero = Monero;

@@ -33,32 +33,20 @@
 /* rfree: implementation for throttle details */
 
 #include <string>
-#include <vector>
-#include <atomic>
-
-#include <boost/asio.hpp>
-
-#include <memory>
-
-#include "syncobj.h"
-
-#include "net/net_utils_base.h" 
-#include "misc_log_ex.h" 
-#include <boost/chrono.hpp>
-#include "misc_language.h"
-#include "pragma_comp_defs.h"
 #include <sstream>
+#include <fstream>
 #include <iomanip>
 #include <algorithm>
 
+#include "epee/net/net_utils_base.h"
+#include "epee/misc_log_ex.h"
+#include "epee/misc_language.h"
+#include "epee/pragma_comp_defs.h"
 
-
-#include <boost/asio/basic_socket.hpp>
-#include <boost/asio/ip/unicast.hpp>
-#include "net/abstract_tcp_server2.h"
+#include "epee/net/abstract_tcp_server2.h"
 
 // TODO:
-#include "net/network_throttle-detail.hpp"
+#include "epee/net/network_throttle-detail.hpp"
 
 #undef BELDEX_DEFAULT_LOG_CATEGORY
 #define BELDEX_DEFAULT_LOG_CATEGORY "net.throttle"
@@ -86,7 +74,6 @@ class connection_basic_pimpl {
 		static int m_default_tos;
 
 		network_throttle_bw m_throttle; // per-perr
-    critical_section m_throttle_lock;
 
 		void _packet(size_t packet_size, int phase, int q_len); // execute a sleep ; phase is not really used now(?) could be used for different kinds of sleep e.g. direct/queue write
 };
@@ -135,6 +122,9 @@ network_throttle::network_throttle(const std::string &nameshort, const std::stri
 	m_slot_size = 1.0; // hard coded in few places
 	m_target_speed = 16 * 1024; // other defaults are probably defined in the command-line parsing code when this class is used e.g. as main global throttle
 	m_last_sample_time = 0;
+	m_history.resize(m_window_size);
+	m_total_packets = 0;
+	m_total_bytes = 0;
 }
 
 void network_throttle::set_name(const std::string &name) 
@@ -166,10 +156,9 @@ void network_throttle::tick()
 	// TODO optimize when moving few slots at once
 	while ( (!m_any_packet_yet) || (last_sample_time_slot < current_sample_time_slot))
 	{
-		_dbg3("Moving counter buffer by 1 second " << last_sample_time_slot << " < " << current_sample_time_slot << " (last time " << m_last_sample_time<<")");
+		MTRACE("Moving counter buffer by 1 second " << last_sample_time_slot << " < " << current_sample_time_slot << " (last time " << m_last_sample_time<<")");
 		// rotate buffer 
-		for (size_t i=m_history.size()-1; i>=1; --i) m_history[i] = m_history[i-1];
-		m_history[0] = packet_info();
+		m_history.push_front(packet_info());
 		if (! m_any_packet_yet) 
 		{
 			m_last_sample_time = time_now;	
@@ -191,7 +180,9 @@ void network_throttle::_handle_trafic_exact(size_t packet_size, size_t orginal_s
 
 	calculate_times_struct cts ;  calculate_times(packet_size, cts , false, -1);
 	calculate_times_struct cts2;  calculate_times(packet_size, cts2, false, 5);
-	m_history[0].m_size += packet_size;
+	m_history.front().m_size += packet_size;
+	m_total_packets++;
+	m_total_bytes += packet_size;
 
 	std::ostringstream oss; oss << "["; 	for (auto sample: m_history) oss << sample.m_size << " ";	 oss << "]" << std::ends;
 	std::string history_str = oss.str();
@@ -217,15 +208,15 @@ network_time_seconds network_throttle::get_sleep_time_after_tick(size_t packet_s
 }
 
 void network_throttle::logger_handle_net(const std::string &filename, double time, size_t size) {
-    static boost::mutex mutex;
+    static std::mutex mutex;
 
-    boost::lock_guard<boost::mutex> lock(mutex);
+    std::lock_guard lock{mutex};
     {
         std::fstream file;
         file.open(filename.c_str(), std::ios::app | std::ios::out );
         file.precision(6);
         if(!file.is_open())
-            _warn("Can't open file " << filename);
+            MWARNING("Can't open file " << filename);
         file << static_cast<int>(time) << " " << static_cast<double>(size/1024) << "\n";
         file.close();
     }
@@ -351,6 +342,12 @@ double network_throttle::get_current_speed() const {
 	
 	return bytes_transferred / ((m_history.size() - 1) * m_slot_size);
 }
+
+void network_throttle::get_stats(uint64_t &total_packets, uint64_t &total_bytes) const {
+	total_packets = m_total_packets;
+	total_bytes = m_total_bytes;
+}
+
 
 } // namespace
 } // namespace
